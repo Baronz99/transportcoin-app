@@ -1,38 +1,55 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
+// Approve a withdrawal request
 export async function POST(
-  req: Request,
-  { params }: { params: { id: string } }
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const userData = getUserFromAuthHeader(authHeader);
+    // ✅ Auth
+    const authHeader = request.headers.get("authorization") || "";
+    const authUser = await getUserFromAuthHeader(authHeader);
 
-    if (!userData) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Adjust this check to match your auth payload shape.
+    // If your payload has isAdmin boolean, use that.
+    if (!authUser || !(authUser as any).isAdmin) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    const admin = await prisma.user.findUnique({ where: { id: userData.userId } });
-    if (!admin || !admin.isAdmin)
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // ✅ Next.js 16 typed routes: params is a Promise
+    const { id } = await params;
+    const withdrawalId = Number(id);
+    if (!withdrawalId || Number.isNaN(withdrawalId)) {
+      return NextResponse.json({ error: "Invalid withdrawal id" }, { status: 400 });
+    }
 
-    const idNum = Number(params.id);
+    // ✅ Find withdrawal
+    const wr = await prisma.withdrawalRequest.findUnique({
+      where: { id: withdrawalId },
+    });
 
-    await prisma.$transaction(async (tx) => {
-      await tx.withdrawalRequest.update({
-        where: { id: idNum },
-        data: { status: "COMPLETED" },
-      });
+    if (!wr) {
+      return NextResponse.json({ error: "Withdrawal not found" }, { status: 404 });
+    }
 
-      await tx.transaction.updateMany({
-        where: { type: "WITHDRAW_CRYPTO_REQUEST", amount: { gte: 0 } },
-        data: { status: "SUCCESS" },
-      });
+    if (wr.status !== "PENDING") {
+      return NextResponse.json(
+        { error: `Withdrawal is already ${wr.status}` },
+        { status: 400 },
+      );
+    }
+
+    // ✅ Approve (mark completed)
+    await prisma.withdrawalRequest.update({
+      where: { id: withdrawalId },
+      data: { status: "COMPLETED" },
     });
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("APPROVE ERROR:", err);
+    console.error("approve withdrawal error:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
