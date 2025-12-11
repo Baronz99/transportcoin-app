@@ -1,0 +1,457 @@
+// app/dashboard/wallets/page.tsx
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+
+type WalletSummary = {
+  balance: number; // TCN
+  tcGoldBalance: number; // TCGold
+  usableUsdCents: number; // USD cents
+};
+
+type Transaction = {
+  id: number;
+  type: string;
+  amount: number;
+  status: string;
+  description?: string | null;
+  createdAt: string;
+};
+
+type LastPurchase = {
+  id: number;
+  tcgAmount: number;
+  usdValueCents: number;
+  btcAddress: string;
+  status: string;
+};
+
+const TCN_USD = 1;
+const TCG_USD = 2.5;
+
+const formatUsd = (cents: number) =>
+  `$${(cents / 100).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+export default function WalletsPage() {
+  const router = useRouter();
+
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawAsset, setWithdrawAsset] = useState("BTC");
+  const [withdrawNetwork, setWithdrawNetwork] = useState("BTC");
+  const [withdrawAddress, setWithdrawAddress] = useState("");
+
+  const [tcgBuyAmount, setTcgBuyAmount] = useState("");
+  const [lastPurchase, setLastPurchase] = useState<LastPurchase | null>(null);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("transportcoin_token")
+      : null;
+
+  useEffect(() => {
+    if (!token) router.push("/login");
+  }, [token, router]);
+
+  const loadSummary = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/wallet/summary", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to load wallet.");
+        return;
+      }
+      setWallet({
+        balance: data.wallet.balance,
+        tcGoldBalance: data.wallet.tcGoldBalance ?? 0,
+        usableUsdCents: data.wallet.usableUsdCents ?? 0,
+      });
+      setTransactions(data.transactions || []);
+    } catch (err) {
+      console.error(err);
+      setError("Network error loading wallet.");
+    }
+  };
+
+  useEffect(() => {
+    loadSummary();
+  }, [token]);
+
+  // -------- Withdraw crypto --------
+
+  const handleWithdrawCrypto = async () => {
+    if (!token) return;
+
+    const amt = Number(withdrawAmount);
+    if (!amt || amt <= 0 || !Number.isInteger(amt)) {
+      alert("Enter a valid TCN amount.");
+      return;
+    }
+    if (!withdrawAddress.trim()) {
+      alert("Enter a destination address.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/wallet/withdraw-crypto", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          amount: amt,
+          asset: withdrawAsset,
+          network: withdrawNetwork,
+          address: withdrawAddress.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Withdrawal failed.");
+        return;
+      }
+
+      setWallet({
+        balance: data.wallet.balance,
+        tcGoldBalance: data.wallet.tcGoldBalance ?? 0,
+        usableUsdCents: data.wallet.usableUsdCents ?? 0,
+      });
+
+      if (data.transaction) {
+        setTransactions((prev) => [data.transaction, ...prev]);
+      }
+
+      setWithdrawAmount("");
+      setWithdrawAddress("");
+      alert("Withdrawal request submitted. Pending admin approval.");
+    } catch (err) {
+      console.error(err);
+      setError("Withdrawal error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // -------- Buy TCGold --------
+
+  const handleBuyTcGold = async () => {
+    if (!token) return;
+
+    const amt = Number(tcgBuyAmount);
+    if (!amt || amt <= 0 || !Number.isInteger(amt)) {
+      alert("Enter a valid TCGold amount.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setLastPurchase(null);
+
+    try {
+      const res = await fetch("/api/trade/buy-tcgold", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ amount: amt }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "TCGold purchase failed.");
+        return;
+      }
+
+      const p = data.purchase;
+      setLastPurchase({
+        id: p.id,
+        tcgAmount: p.tcgAmount,
+        usdValueCents: p.usdValueCents,
+        btcAddress: p.btcAddress,
+        status: p.status,
+      });
+
+      setTcgBuyAmount("");
+    } catch (err) {
+      console.error(err);
+      setError("TCGold purchase error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const totalUsd =
+    (wallet?.usableUsdCents ?? 0) / 100 +
+    (wallet?.balance ?? 0) * TCN_USD +
+    (wallet?.tcGoldBalance ?? 0) * TCG_USD;
+
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black p-6 text-slate-50">
+      <div className="mb-6">
+        <p className="text-[11px] uppercase tracking-[0.25em] text-slate-500">
+          Wallets
+        </p>
+        <h1 className="mt-1 text-xl font-semibold">Transportcoin Balance</h1>
+        <p className="mt-1 text-xs text-slate-400 max-w-xl">
+          View balances and initiate crypto withdrawals and TCGold purchases
+          funded via BTC.
+        </p>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-xl border border-rose-700 bg-rose-900/50 px-4 py-3 text-sm text-rose-200">
+          {error}
+        </div>
+      )}
+
+      {/* Portfolio */}
+      <section className="mb-8 grid gap-4 md:grid-cols-3">
+        <div className="rounded-3xl border border-gold/40 bg-gradient-to-br from-yellow-600/10 to-black p-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-gold">
+            Total Portfolio Value
+          </p>
+          <p className="mt-1 text-2xl font-semibold text-gold">
+            {formatUsd(Math.round(totalUsd * 100))}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-300">
+            Aggregate of TCN, TCGold and any usable USD balance.
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+            TCN · Transportcoin
+          </p>
+          <p className="mt-1 text-lg font-semibold">
+            {wallet?.balance ?? 0} TCN
+          </p>
+          <p className="text-xs text-slate-400">
+            ~{formatUsd((wallet?.balance ?? 0) * 100)}
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+            TCG · TCGold
+          </p>
+          <p className="mt-1 text-lg font-semibold">
+            {wallet?.tcGoldBalance ?? 0} TCG
+          </p>
+          <p className="text-xs text-slate-400">
+            ~
+            {formatUsd(
+              Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100),
+            )}
+          </p>
+        </div>
+      </section>
+
+      {/* Actions */}
+      <section className="mb-10 grid gap-6 lg:grid-cols-2">
+        {/* Withdraw */}
+        <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-5">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+            Request Crypto Withdrawal
+          </p>
+          <p className="mt-1 text-xs text-slate-300">
+            Subtracts from your TCN balance and requires holding TCGold.
+          </p>
+
+          <div className="mt-4 space-y-3 text-xs">
+            <label className="block text-slate-400">
+              Amount (TCN)
+              <input
+                type="number"
+                value={withdrawAmount}
+                onChange={(e) => setWithdrawAmount(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-3 py-2 text-xs outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+
+            <div className="flex gap-3">
+              <label className="flex-1 text-slate-400">
+                Asset
+                <select
+                  value={withdrawAsset}
+                  onChange={(e) => setWithdrawAsset(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-2 py-2 text-xs outline-none focus:border-gold"
+                >
+                  <option>BTC</option>
+                  <option>ETH</option>
+                  <option>USDT</option>
+                  <option>USDC</option>
+                </select>
+              </label>
+
+              <label className="flex-1 text-slate-400">
+                Network
+                <select
+                  value={withdrawNetwork}
+                  onChange={(e) => setWithdrawNetwork(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-2 py-2 text-xs outline-none focus:border-gold"
+                >
+                  <option>BTC</option>
+                  <option>ERC20</option>
+                  <option>TRC20</option>
+                  <option>BEP20</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="block text-slate-400">
+              Destination address
+              <input
+                type="text"
+                value={withdrawAddress}
+                onChange={(e) => setWithdrawAddress(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-3 py-2 text-xs outline-none focus:border-gold"
+              />
+            </label>
+
+            <button
+              onClick={handleWithdrawCrypto}
+              disabled={loading}
+              className="mt-3 w-full rounded-full border border-gold px-3 py-2 text-xs font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
+            >
+              {loading ? "Working…" : "Submit Withdrawal Request"}
+            </button>
+          </div>
+        </div>
+
+        {/* Buy TCGold */}
+        <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-5">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+            Buy TCGold with BTC
+          </p>
+          <p className="mt-1 text-xs text-slate-300">
+            Create a purchase request and receive BTC payment details.
+          </p>
+
+          <div className="mt-4 space-y-3 text-xs">
+            <label className="block text-slate-400">
+              Amount (TCGold tokens)
+              <input
+                type="number"
+                value={tcgBuyAmount}
+                onChange={(e) => setTcgBuyAmount(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-3 py-2 text-xs outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+            <p className="text-[10px] text-slate-500">
+              1 TCGold ≈ ${TCG_USD.toFixed(2)} (internal rate).
+            </p>
+
+            <button
+              onClick={handleBuyTcGold}
+              disabled={loading}
+              className="mt-2 w-full rounded-full bg-gold px-3 py-2 text-xs font-semibold text-black hover:bg-gold/90 disabled:opacity-60"
+            >
+              {loading ? "Working…" : "Create TCGold purchase request"}
+            </button>
+
+            {lastPurchase && (
+              <div className="mt-3 rounded-xl border border-amber-800 bg-amber-950/40 px-3 py-3 text-[11px] text-amber-100 space-y-1">
+                <p className="font-semibold text-amber-200">
+                  TCGold purchase created
+                </p>
+                <p>
+                  <span className="text-slate-300">Amount:</span>{" "}
+                  {lastPurchase.tcgAmount} TCG (
+                  {formatUsd(lastPurchase.usdValueCents)})
+                </p>
+                <p>
+                  <span className="text-slate-300">Send BTC to:</span>
+                  <br />
+                  <span className="font-mono text-[10px]">
+                    {lastPurchase.btcAddress}
+                  </span>
+                </p>
+                <p className="text-[10px] text-amber-200 mt-1">
+                  After funding this address with the corresponding BTC amount,
+                  Transportcoin ops will confirm on-chain and credit your TCGold
+                  balance.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Transactions */}
+      <section className="rounded-3xl border border-slate-800 bg-slate-950/80 p-5 text-xs">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+          Recent Transactions
+        </p>
+        {transactions.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-400">
+            No wallet activity yet. Once you start purchasing TCGold or
+            requesting withdrawals, history will appear here.
+          </p>
+        ) : (
+          <div className="mt-4 max-h-[400px] overflow-auto rounded-2xl border border-slate-900">
+            <table className="min-w-full text-left text-[11px]">
+              <thead className="bg-slate-900/90 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Amount</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((tx) => (
+                  <tr
+                    key={tx.id}
+                    className="border-t border-slate-900 hover:bg-slate-900/60"
+                  >
+                    <td className="px-3 py-2">{tx.type}</td>
+                    <td className="px-3 py-2">{tx.amount}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={
+                          tx.status === "SUCCESS"
+                            ? "rounded-full bg-emerald-900/50 px-2 py-0.5 text-emerald-200"
+                            : tx.status === "PENDING"
+                            ? "rounded-full bg-amber-900/50 px-2 py-0.5 text-amber-200"
+                            : "rounded-full bg-rose-900/50 px-2 py-0.5 text-rose-200"
+                        }
+                      >
+                        {tx.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-300">
+                      {tx.description || "—"}
+                    </td>
+                    <td className="px-3 py-2 text-[10px] text-slate-500">
+                      {new Date(tx.createdAt).toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
