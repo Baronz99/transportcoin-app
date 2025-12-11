@@ -31,21 +31,21 @@ export default function TradingPage() {
   const router = useRouter();
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [tcgAmount, setTcgAmount] = useState("");
   const [loading, setLoading] = useState(true);
-  const [loadingTrade, setLoadingTrade] = useState(false);
 
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("transportcoin_token")
       : null;
 
+  // redirect if no token
   useEffect(() => {
     if (typeof window === "undefined") return;
     const t = localStorage.getItem("transportcoin_token");
     if (!t) router.push("/login");
   }, [router]);
 
+  // load wallet + transactions
   useEffect(() => {
     if (!token) return;
     setLoading(true);
@@ -78,47 +78,6 @@ export default function TradingPage() {
   const tcnValueUsd = tcnBalance * TCN_PRICE_USD;
   const tcgValueUsd = tcgBalance * TCGOLD_PRICE_USD;
 
-  const handleTrade = async (side: "buy" | "sell") => {
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-    const value = Number(tcgAmount);
-    if (!value || value <= 0) {
-      alert("Enter a valid TCGold amount.");
-      return;
-    }
-
-    setLoadingTrade(true);
-    try {
-      const endpoint =
-        side === "buy" ? "/api/trade/buy-tcgold" : "/api/trade/sell-tcgold";
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ amountTcg: value }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || `Error trying to ${side} TCGold`);
-      } else {
-        setWallet(data.wallet);
-        setTransactions((prev) => [data.transaction, ...prev]);
-        setTcgAmount("");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Network error");
-    } finally {
-      setLoadingTrade(false);
-    }
-  };
-
   const tradeHistory = transactions.filter((tx) =>
     ["BUY_TCGOLD", "SELL_TCGOLD"].includes(tx.type),
   );
@@ -132,8 +91,7 @@ export default function TradingPage() {
       <div>
         <h1 className="text-xl font-semibold text-slate-50">Trading</h1>
         <p className="text-sm text-slate-400">
-          Buy and sell TCGold using your TCN balance at the current reference
-          price.
+          Monitor your TCN and TCGold positions at the current reference price.
         </p>
       </div>
 
@@ -176,63 +134,18 @@ export default function TradingPage() {
         </div>
       </section>
 
-      {/* Trading panel + history */}
-      <section className="grid gap-6 md:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)]">
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
-          <h2 className="text-sm font-semibold text-slate-100">
-            Trade TCGold
-          </h2>
-          <p className="mt-1 text-xs text-slate-400">
-            Use TCN to buy TCGold or sell TCGold back into TCN. All trades are
-            executed instantly in this prototype.
-          </p>
-
-          <div className="mt-4 space-y-2">
-            <label className="text-xs text-slate-400">
-              Amount in TCGold
-            </label>
-            <input
-              type="number"
-              value={tcgAmount}
-              onChange={(e) => setTcgAmount(e.target.value)}
-              placeholder="e.g. 10"
-              className="w-full rounded-xl border border-slate-800 bg-black/60 px-3 py-2 text-sm outline-none focus:border-gold focus:ring-1 focus:ring-gold"
-            />
-          </div>
-
-          <div className="mt-4 flex gap-3">
-            <button
-              disabled={loadingTrade}
-              onClick={() => handleTrade("buy")}
-              className="flex-1 rounded-xl bg-gold px-3 py-2 text-sm font-semibold text-black hover:bg-gold-soft disabled:opacity-60"
-            >
-              Buy TCGold (use TCN)
-            </button>
-            <button
-              disabled={loadingTrade}
-              onClick={() => handleTrade("sell")}
-              className="flex-1 rounded-xl border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-gold hover:text-gold disabled:opacity-60"
-            >
-              Sell TCGold (get TCN)
-            </button>
-          </div>
-
-          <p className="mt-3 text-[11px] text-slate-400">
-            Tip: Use the main dashboard to monitor your overall portfolio value
-            in USD after each trade.
-          </p>
-        </div>
-
+      {/* TCGold Trade History only */}
+      <section>
         <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4">
           <h3 className="text-sm font-semibold text-slate-100">
             TCGold Trade History
           </h3>
           <p className="mb-2 text-[11px] text-slate-400">
-            Only TCGold buy and sell operations are shown here.
+            Historical TCGold buy and sell operations will appear here.
           </p>
           {tradeHistory.length === 0 ? (
             <p className="text-sm text-slate-500">
-              No TCGold trades yet. Place your first buy or sell order above.
+              No TCGold trades recorded yet.
             </p>
           ) : (
             <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-800">
