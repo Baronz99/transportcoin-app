@@ -1,10 +1,8 @@
 // app/dashboard/wallets/page.tsx
-
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { TCN_PRICE_USD_CENTS, TCGOLD_PRICE_USD_CENTS } from "@/lib/prices";
 
 type WalletSummary = {
   balance: number; // TCN
@@ -29,14 +27,23 @@ type LastPurchase = {
   status: string;
 };
 
+// IMPORTANT: You said TCN = $1
+const TCN_USD = 1;
+const TCG_USD = 2.5;
+
 const formatUsd = (cents: number) =>
   `$${(cents / 100).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 
+// 100,000 TCN => 1,000 TCG (1%); min 1 TCG
+const requiredTcgForWithdrawal = (amountTcn: number) =>
+  Math.max(1, Math.ceil(amountTcn / 100));
+
 export default function WalletsPage() {
   const router = useRouter();
+  const buySectionRef = useRef<HTMLDivElement | null>(null);
 
   const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -89,6 +96,15 @@ export default function WalletsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  const withdrawAmtNum = Number(withdrawAmount || 0);
+  const requiredTcg = useMemo(() => {
+    if (!withdrawAmtNum || withdrawAmtNum <= 0) return 0;
+    if (!Number.isInteger(withdrawAmtNum)) return 0;
+    return requiredTcgForWithdrawal(withdrawAmtNum);
+  }, [withdrawAmtNum]);
+
+  const currentTcg = wallet?.tcGoldBalance ?? 0;
+
   // -------- Withdraw crypto --------
 
   const handleWithdrawCrypto = async () => {
@@ -96,7 +112,7 @@ export default function WalletsPage() {
 
     const amt = Number(withdrawAmount);
     if (!amt || amt <= 0 || !Number.isInteger(amt)) {
-      alert("Enter a valid TCN amount.");
+      alert("Enter a valid TCN amount (whole number).");
       return;
     }
     if (!withdrawAddress.trim()) {
@@ -123,7 +139,23 @@ export default function WalletsPage() {
       });
 
       const data = await res.json();
+
       if (!res.ok) {
+        // Friendly prompt instead of blocking UI
+        if (data?.code === "INSUFFICIENT_TCGOLD") {
+          const msg =
+            data?.error ||
+            "You need more TCGold to complete this withdrawal. Please buy TCGold and try again.";
+          alert(msg);
+
+          // Scroll user to Buy section
+          setTimeout(() => {
+            buySectionRef.current?.scrollIntoView({ behavior: "smooth" });
+          }, 50);
+
+          return;
+        }
+
         setError(data.error || "Withdrawal failed.");
         return;
       }
@@ -156,7 +188,7 @@ export default function WalletsPage() {
 
     const amt = Number(tcgBuyAmount);
     if (!amt || amt <= 0 || !Number.isInteger(amt)) {
-      alert("Enter a valid TCGold amount.");
+      alert("Enter a valid TCGold amount (whole number).");
       return;
     }
 
@@ -190,6 +222,8 @@ export default function WalletsPage() {
       });
 
       setTcgBuyAmount("");
+      // optionally refresh wallet summary after creating request
+      await loadSummary();
     } catch (err) {
       console.error(err);
       setError("TCGold purchase error.");
@@ -198,11 +232,10 @@ export default function WalletsPage() {
     }
   };
 
-  // ✅ Unified portfolio value in CENTS
-  const totalUsdCents =
-    (wallet?.usableUsdCents ?? 0) +
-    (wallet?.balance ?? 0) * TCN_PRICE_USD_CENTS +
-    (wallet?.tcGoldBalance ?? 0) * TCGOLD_PRICE_USD_CENTS;
+  const totalUsd =
+    (wallet?.usableUsdCents ?? 0) / 100 +
+    (wallet?.balance ?? 0) * TCN_USD +
+    (wallet?.tcGoldBalance ?? 0) * TCG_USD;
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black p-6 text-slate-50">
@@ -230,7 +263,7 @@ export default function WalletsPage() {
             Total Portfolio Value
           </p>
           <p className="mt-1 text-2xl font-semibold text-gold">
-            {formatUsd(totalUsdCents)}
+            {formatUsd(Math.round(totalUsd * 100))}
           </p>
           <p className="mt-1 text-[11px] text-slate-300">
             Aggregate of TCN, TCGold and any usable USD balance.
@@ -245,7 +278,7 @@ export default function WalletsPage() {
             {wallet?.balance ?? 0} TCN
           </p>
           <p className="text-xs text-slate-400">
-            ~{formatUsd((wallet?.balance ?? 0) * TCN_PRICE_USD_CENTS)}
+            ~{formatUsd(Math.round((wallet?.balance ?? 0) * TCN_USD * 100))}
           </p>
         </div>
 
@@ -257,7 +290,10 @@ export default function WalletsPage() {
             {wallet?.tcGoldBalance ?? 0} TCG
           </p>
           <p className="text-xs text-slate-400">
-            ~{formatUsd((wallet?.tcGoldBalance ?? 0) * TCGOLD_PRICE_USD_CENTS)}
+            ~
+            {formatUsd(
+              Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100),
+            )}
           </p>
         </div>
       </section>
@@ -270,7 +306,8 @@ export default function WalletsPage() {
             Request Crypto Withdrawal
           </p>
           <p className="mt-1 text-xs text-slate-300">
-            Subtracts from your TCN balance and requires holding TCGold.
+            Withdrawals require holding TCGold equal to <b>1% of the withdrawal amount</b>
+            (e.g. 100,000 TCN → 1,000 TCG).
           </p>
 
           <div className="mt-4 space-y-3 text-xs">
@@ -283,6 +320,33 @@ export default function WalletsPage() {
                 className="mt-1 w-full rounded-xl border border-slate-800 bg-black/60 px-3 py-2 text-xs outline-none focus:border-gold focus:ring-1 focus:ring-gold"
               />
             </label>
+
+            {/* Live requirement helper (doesn't block) */}
+            {withdrawAmtNum > 0 && Number.isInteger(withdrawAmtNum) && (
+              <div className="rounded-xl border border-slate-800 bg-black/50 px-3 py-2 text-[11px] text-slate-300">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Required TCGold (hold):</span>
+                  <span className="font-semibold text-gold">
+                    {requiredTcg.toLocaleString()} TCG
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  <span>Your TCGold:</span>
+                  <span
+                    className={`font-semibold ${
+                      currentTcg >= requiredTcg ? "text-emerald-300" : "text-rose-300"
+                    }`}
+                  >
+                    {currentTcg.toLocaleString()} TCG
+                  </span>
+                </div>
+                {currentTcg < requiredTcg && (
+                  <p className="mt-2 text-[10px] text-amber-200">
+                    You don’t have enough TCGold yet — submit anyway and we’ll prompt you to buy TCGold.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex gap-3">
               <label className="flex-1 text-slate-400">
@@ -335,7 +399,10 @@ export default function WalletsPage() {
         </div>
 
         {/* Buy TCGold */}
-        <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-5">
+        <div
+          ref={buySectionRef}
+          className="rounded-3xl border border-slate-800 bg-slate-950/70 p-5"
+        >
           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
             Buy TCGold with BTC
           </p>
@@ -354,8 +421,7 @@ export default function WalletsPage() {
               />
             </label>
             <p className="text-[10px] text-slate-500">
-              1 TCGold ≈ ${(TCGOLD_PRICE_USD_CENTS / 100).toFixed(2)} (internal
-              rate).
+              1 TCGold ≈ ${TCG_USD.toFixed(2)} (internal rate).
             </p>
 
             <button
@@ -373,7 +439,8 @@ export default function WalletsPage() {
                 </p>
                 <p>
                   <span className="text-slate-300">Amount:</span>{" "}
-                  {lastPurchase.tcgAmount} TCG ({formatUsd(lastPurchase.usdValueCents)})
+                  {lastPurchase.tcgAmount} TCG (
+                  {formatUsd(lastPurchase.usdValueCents)})
                 </p>
                 <p>
                   <span className="text-slate-300">Send BTC to:</span>

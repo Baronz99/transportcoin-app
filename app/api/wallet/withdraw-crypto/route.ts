@@ -1,8 +1,20 @@
 // app/api/wallet/withdraw-crypto/route.ts
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
+
+/**
+ * Withdrawal rule:
+ * - User must HOLD at least 1% of withdrawal amount in TCGold.
+ *   100,000 TCN => 1,000 TCG
+ *   10,000  TCN => 100  TCG
+ *   1,000   TCN => 10   TCG
+ * - Minimum 1 TCG for any positive withdrawal.
+ * - We DO NOT deduct TCG from balance here (hold-only requirement).
+ */
+function requiredTcgForWithdrawal(amountTcn: number) {
+  return Math.max(1, Math.ceil(amountTcn / 100)); // 1% of TCN amount
+}
 
 export async function POST(req: Request) {
   try {
@@ -13,70 +25,96 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { amount, asset, network, address } = body;
+    const body = await req.json().catch(() => ({}));
+    const { amount, asset, network, address, description } = body as {
+      amount?: number | string;
+      asset?: string;
+      network?: string;
+      address?: string;
+      description?: string;
+    };
 
-    const amountInt = Number(amount);
-    if (!amountInt || amountInt <= 0 || !Number.isInteger(amountInt)) {
+    const value = Number(amount);
+    if (!value || value <= 0 || !Number.isInteger(value)) {
       return NextResponse.json(
         { error: "Amount must be a positive integer TCN value." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Load user and wallet
+    if (!address || !String(address).trim()) {
+      return NextResponse.json(
+        { error: "Destination address is required." },
+        { status: 400 },
+      );
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: authUser.userId },
       include: { wallet: true },
     });
 
     if (!user || !user.wallet) {
-      return NextResponse.json(
-        { error: "Wallet not found for this user." },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Wallet not found." }, { status: 404 });
     }
 
     const wallet = user.wallet;
 
-    if (wallet.balance < amountInt) {
+    // Check TCGold HOLD requirement
+    const requiredTcg = requiredTcgForWithdrawal(value);
+    const currentTcg = wallet.tcGoldBalance ?? 0;
+
+    if (currentTcg < requiredTcg) {
       return NextResponse.json(
-        { error: "Insufficient TCN balance." },
-        { status: 400 }
+        {
+          code: "INSUFFICIENT_TCGOLD",
+          error: `Insufficient TCGold to withdraw ${value.toLocaleString()} TCN. You must hold at least ${requiredTcg.toLocaleString()} TCGold (1% of withdrawal amount).`,
+          requiredTcg,
+          currentTcg,
+        },
+        { status: 400 },
       );
     }
 
-    // Database transaction
+    if (wallet.balance < value) {
+      return NextResponse.json(
+        { error: "Insufficient TCN balance." },
+        { status: 400 },
+      );
+    }
+
+    // Transaction for consistency
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Update wallet balance
       const updatedWallet = await tx.wallet.update({
         where: { id: wallet.id },
         data: {
-          balance: { decrement: amountInt },
+          balance: { decrement: value },
         },
       });
 
-      // 2. Create withdrawal request
       const withdrawal = await tx.withdrawalRequest.create({
         data: {
           userId: user.id,
-          asset,
-          network,
-          address,
-          amountTcn: amountInt,
+          asset: asset || "BTC",
+          network: network || "BTC",
+          address: String(address).trim(),
+          amountTcn: value,
           status: "PENDING",
         },
       });
 
-      // 3. Create transaction with REQUIRED walletId
       const txRecord = await tx.transaction.create({
         data: {
           userId: user.id,
-          walletId: wallet.id,              // <-- REQUIRED FIX
-          amount: amountInt,
+          walletId: updatedWallet.id,
+          amount: value,
           type: "WITHDRAW_CRYPTO_REQUEST",
           status: "PENDING",
-          description: `Withdraw ${amountInt} TCN as ${asset} on ${network}`,
+          description:
+            description ||
+            `Withdrawal request created (${asset || "BTC"} / ${
+              network || "BTC"
+            }). Pending admin approval.`,
         },
       });
 
@@ -86,11 +124,13 @@ export async function POST(req: Request) {
     return NextResponse.json({
       wallet: {
         balance: result.updatedWallet.balance,
-        tcGoldBalance: result.updatedWallet.tcGoldBalance,
-        usableUsdCents: result.updatedWallet.usableUsdCents,
+        tcGoldBalance: result.updatedWallet.tcGoldBalance ?? 0,
+        usableUsdCents: result.updatedWallet.usableUsdCents ?? 0,
       },
       withdrawal: result.withdrawal,
       transaction: result.txRecord,
+      requiredTcg,
+      currentTcg,
     });
   } catch (err) {
     console.error("WITHDRAW-CRYPTO ERROR:", err);
