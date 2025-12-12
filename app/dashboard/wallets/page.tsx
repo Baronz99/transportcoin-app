@@ -106,7 +106,6 @@ export default function WalletsPage() {
   const currentTcg = wallet?.tcGoldBalance ?? 0;
 
   // -------- Withdraw crypto --------
-
   const handleWithdrawCrypto = async () => {
     if (!token) return;
 
@@ -141,14 +140,12 @@ export default function WalletsPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        // Friendly prompt instead of blocking UI
         if (data?.code === "INSUFFICIENT_TCGOLD") {
           const msg =
             data?.error ||
             "You need more TCGold to complete this withdrawal. Please buy TCGold and try again.";
           alert(msg);
 
-          // Scroll user to Buy section
           setTimeout(() => {
             buySectionRef.current?.scrollIntoView({ behavior: "smooth" });
           }, 50);
@@ -181,8 +178,7 @@ export default function WalletsPage() {
     }
   };
 
-  // -------- Buy TCGold --------
-
+  // -------- Buy TCGold (BTC deposit request) --------
   const handleBuyTcGold = async () => {
     if (!token) return;
 
@@ -203,7 +199,8 @@ export default function WalletsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ amount: amt }),
+        // send the exact field your API expects (but API also accepts "amount")
+        body: JSON.stringify({ amountTcg: amt }),
       });
 
       const data = await res.json();
@@ -221,8 +218,12 @@ export default function WalletsPage() {
         status: p.status,
       });
 
+      // show transaction in history immediately
+      if (data.transaction) {
+        setTransactions((prev) => [data.transaction, ...prev]);
+      }
+
       setTcgBuyAmount("");
-      // optionally refresh wallet summary after creating request
       await loadSummary();
     } catch (err) {
       console.error(err);
@@ -290,10 +291,7 @@ export default function WalletsPage() {
             {wallet?.tcGoldBalance ?? 0} TCG
           </p>
           <p className="text-xs text-slate-400">
-            ~
-            {formatUsd(
-              Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100),
-            )}
+            ~{formatUsd(Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100))}
           </p>
         </div>
       </section>
@@ -306,7 +304,7 @@ export default function WalletsPage() {
             Request Crypto Withdrawal
           </p>
           <p className="mt-1 text-xs text-slate-300">
-            Withdrawals require holding TCGold equal to <b>1% of the withdrawal amount</b>
+            Withdrawals require holding TCGold equal to <b>1% of the withdrawal amount</b>{" "}
             (e.g. 100,000 TCN → 1,000 TCG).
           </p>
 
@@ -321,7 +319,6 @@ export default function WalletsPage() {
               />
             </label>
 
-            {/* Live requirement helper (doesn't block) */}
             {withdrawAmtNum > 0 && Number.isInteger(withdrawAmtNum) && (
               <div className="rounded-xl border border-slate-800 bg-black/50 px-3 py-2 text-[11px] text-slate-300">
                 <div className="flex items-center justify-between gap-2">
@@ -435,12 +432,11 @@ export default function WalletsPage() {
             {lastPurchase && (
               <div className="mt-3 rounded-xl border border-amber-800 bg-amber-950/40 px-3 py-3 text-[11px] text-amber-100 space-y-1">
                 <p className="font-semibold text-amber-200">
-                  TCGold purchase created
+                  TCGold purchase created (pending)
                 </p>
                 <p>
                   <span className="text-slate-300">Amount:</span>{" "}
-                  {lastPurchase.tcgAmount} TCG (
-                  {formatUsd(lastPurchase.usdValueCents)})
+                  {lastPurchase.tcgAmount} TCG ({formatUsd(lastPurchase.usdValueCents)})
                 </p>
                 <p>
                   <span className="text-slate-300">Send BTC to:</span>
@@ -503,9 +499,7 @@ export default function WalletsPage() {
                         {tx.status}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-slate-300">
-                      {tx.description || "—"}
-                    </td>
+                    <td className="px-3 py-2 text-slate-300">{tx.description || "—"}</td>
                     <td className="px-3 py-2 text-[10px] text-slate-500">
                       {new Date(tx.createdAt).toLocaleString()}
                     </td>
