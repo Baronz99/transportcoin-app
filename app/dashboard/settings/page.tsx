@@ -311,7 +311,7 @@ export default function SettingsPage() {
 
         <div>Email: {userMeta?.email}</div>
         <div>Tier: {userMeta?.tier ?? "BASIC"}</div>
-        <div>Created: {formatDate(userMeta?.createdAt)}</div>
+        
         <div>Last Login: {formatDate(userMeta?.lastLoginAt)}</div>
 
         <button
