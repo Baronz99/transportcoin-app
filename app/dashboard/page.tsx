@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { TCN_PRICE_USD_CENTS, TCGOLD_PRICE_USD_CENTS } from "@/lib/prices";
 
 type Wallet = {
   balance: number;
@@ -28,16 +29,12 @@ type Profile = {
   country?: string | null;
 };
 
-// Same pricing logic we used elsewhere
-const TCN_PRICE_USD = 0.01;
-const TCGOLD_PRICE_USD = 2.5;
-
-const fmtUsd = (v: number) =>
+const fmtUsdFromCents = (cents: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 2,
-  }).format(v);
+  }).format(cents / 100);
 
 const formatDateTime = (value?: string | null) =>
   value ? new Date(value).toLocaleString() : "—";
@@ -152,12 +149,9 @@ export default function DashboardPage() {
         }
 
         if (!metaData.error) {
-          if (typeof metaData.slaDays === "number") {
-            setSlaDays(metaData.slaDays);
-          }
-          if (typeof metaData.pendingCount === "number") {
+          if (typeof metaData.slaDays === "number") setSlaDays(metaData.slaDays);
+          if (typeof metaData.pendingCount === "number")
             setPendingCount(metaData.pendingCount);
-          }
         }
       } catch (err) {
         console.error(err);
@@ -171,9 +165,11 @@ export default function DashboardPage() {
 
   const tcnBalance = wallet?.balance ?? 0;
   const tcgBalance = wallet?.tcGoldBalance ?? 0;
-  const tcnValueUsd = tcnBalance * TCN_PRICE_USD;
-  const tcgValueUsd = tcgBalance * TCGOLD_PRICE_USD;
-  const totalValueUsd = tcnValueUsd + tcgValueUsd;
+
+  // ✅ Unified pricing (cents)
+  const tcnValueUsdCents = tcnBalance * TCN_PRICE_USD_CENTS;
+  const tcgValueUsdCents = tcgBalance * TCGOLD_PRICE_USD_CENTS;
+  const totalValueUsdCents = tcnValueUsdCents + tcgValueUsdCents;
 
   const greetingName = useMemo(() => {
     if (profile?.fullName && profile.fullName.trim().length > 0) {
@@ -245,11 +241,11 @@ export default function DashboardPage() {
             Portfolio value
           </p>
           <p className="mt-2 text-3xl font-semibold text-gold">
-            {fmtUsd(totalValueUsd)}
+            {fmtUsdFromCents(totalValueUsdCents)}
           </p>
           <p className="mt-1 text-xs text-slate-400">
-            Includes your TCN balance and TCGold holdings at indicative
-            internal rates.
+            Includes your TCN balance and TCGold holdings at indicative internal
+            rates.
           </p>
 
           <div className="mt-4 grid gap-3 text-xs md:grid-cols-2">
@@ -259,11 +255,11 @@ export default function DashboardPage() {
               </p>
               <p className="mt-1 text-lg font-semibold">
                 {tcnBalance}{" "}
-                <span className="text-xs font-normal text-slate-400">
-                  TCN
-                </span>
+                <span className="text-xs font-normal text-slate-400">TCN</span>
               </p>
-              <p className="text-[13px] text-gold">{fmtUsd(tcnValueUsd)}</p>
+              <p className="text-[13px] text-gold">
+                {fmtUsdFromCents(tcnValueUsdCents)}
+              </p>
               <p className="mt-1 text-[11px] text-slate-500">
                 Utility balance for transport activities and on/off-ramp
                 requests.
@@ -276,11 +272,11 @@ export default function DashboardPage() {
               </p>
               <p className="mt-1 text-lg font-semibold">
                 {tcgBalance}{" "}
-                <span className="text-xs font-normal text-slate-400">
-                  TCG
-                </span>
+                <span className="text-xs font-normal text-slate-400">TCG</span>
               </p>
-              <p className="text-[13px] text-gold">{fmtUsd(tcgValueUsd)}</p>
+              <p className="text-[13px] text-gold">
+                {fmtUsdFromCents(tcgValueUsdCents)}
+              </p>
               <p className="mt-1 text-[11px] text-slate-500">
                 Governance-style token for deeper participation and withdrawal
                 privileges.
@@ -372,8 +368,8 @@ export default function DashboardPage() {
 
           {recentTransactions.length === 0 ? (
             <p className="mt-4 text-sm text-slate-500">
-              No activity yet. Once you start depositing, trading, or
-              requesting withdrawals, they’ll appear here.
+              No activity yet. Once you start depositing, trading, or requesting
+              withdrawals, they’ll appear here.
             </p>
           ) : (
             <div className="max-h-80 overflow-y-auto">

@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { TCN_PRICE_USD_CENTS, TCGOLD_PRICE_USD_CENTS } from "@/lib/prices";
 
 type WalletSummary = {
   balance: number; // TCN
@@ -27,9 +28,6 @@ type LastPurchase = {
   btcAddress: string;
   status: string;
 };
-
-const TCN_USD = 1;
-const TCG_USD = 2.5;
 
 const formatUsd = (cents: number) =>
   `$${(cents / 100).toLocaleString(undefined, {
@@ -88,6 +86,7 @@ export default function WalletsPage() {
 
   useEffect(() => {
     loadSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // -------- Withdraw crypto --------
@@ -199,10 +198,11 @@ export default function WalletsPage() {
     }
   };
 
-  const totalUsd =
-    (wallet?.usableUsdCents ?? 0) / 100 +
-    (wallet?.balance ?? 0) * TCN_USD +
-    (wallet?.tcGoldBalance ?? 0) * TCG_USD;
+  // ✅ Unified portfolio value in CENTS
+  const totalUsdCents =
+    (wallet?.usableUsdCents ?? 0) +
+    (wallet?.balance ?? 0) * TCN_PRICE_USD_CENTS +
+    (wallet?.tcGoldBalance ?? 0) * TCGOLD_PRICE_USD_CENTS;
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-slate-950 to-black p-6 text-slate-50">
@@ -230,7 +230,7 @@ export default function WalletsPage() {
             Total Portfolio Value
           </p>
           <p className="mt-1 text-2xl font-semibold text-gold">
-            {formatUsd(Math.round(totalUsd * 100))}
+            {formatUsd(totalUsdCents)}
           </p>
           <p className="mt-1 text-[11px] text-slate-300">
             Aggregate of TCN, TCGold and any usable USD balance.
@@ -245,7 +245,7 @@ export default function WalletsPage() {
             {wallet?.balance ?? 0} TCN
           </p>
           <p className="text-xs text-slate-400">
-            ~{formatUsd((wallet?.balance ?? 0) * 100)}
+            ~{formatUsd((wallet?.balance ?? 0) * TCN_PRICE_USD_CENTS)}
           </p>
         </div>
 
@@ -257,10 +257,7 @@ export default function WalletsPage() {
             {wallet?.tcGoldBalance ?? 0} TCG
           </p>
           <p className="text-xs text-slate-400">
-            ~
-            {formatUsd(
-              Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100),
-            )}
+            ~{formatUsd((wallet?.tcGoldBalance ?? 0) * TCGOLD_PRICE_USD_CENTS)}
           </p>
         </div>
       </section>
@@ -357,7 +354,8 @@ export default function WalletsPage() {
               />
             </label>
             <p className="text-[10px] text-slate-500">
-              1 TCGold ≈ ${TCG_USD.toFixed(2)} (internal rate).
+              1 TCGold ≈ ${(TCGOLD_PRICE_USD_CENTS / 100).toFixed(2)} (internal
+              rate).
             </p>
 
             <button
@@ -375,8 +373,7 @@ export default function WalletsPage() {
                 </p>
                 <p>
                   <span className="text-slate-300">Amount:</span>{" "}
-                  {lastPurchase.tcgAmount} TCG (
-                  {formatUsd(lastPurchase.usdValueCents)})
+                  {lastPurchase.tcgAmount} TCG ({formatUsd(lastPurchase.usdValueCents)})
                 </p>
                 <p>
                   <span className="text-slate-300">Send BTC to:</span>
