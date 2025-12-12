@@ -1,33 +1,30 @@
 // app/api/trade/buy-tcgold/route.ts
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
-// Internal fixed price for now
-const TCG_USD = 2.5;
-
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const authUser = getUserFromAuthHeader(authHeader);
+    // ✅ auth
+    const authHeader = req.headers.get("authorization") || "";
+    const authUser = await getUserFromAuthHeader(authHeader);
 
-    if (!authUser) {
+    if (!authUser?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // ✅ body
     const body = await req.json();
-    const { amount } = body;
+    const amountTcg = Number(body?.amountTcg);
 
-    const tcgAmount = Number(amount);
-    if (!tcgAmount || tcgAmount <= 0 || !Number.isInteger(tcgAmount)) {
+    if (!amountTcg || amountTcg <= 0 || !Number.isFinite(amountTcg)) {
       return NextResponse.json(
-        { error: "Amount must be a positive integer number of TCGold tokens." },
+        { error: "Amount must be a valid positive number." },
         { status: 400 },
       );
     }
 
-    // Load user & wallet
+    // ✅ load user + wallet
     const user = await prisma.user.findUnique({
       where: { id: authUser.userId },
       include: { wallet: true },
@@ -37,76 +34,57 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // Ensure there is a PlatformConfig row
-    let config = await prisma.platformConfig.findUnique({
-      where: { id: 1 },
-    });
+    // ✅ ensure wallet exists
+    const wallet =
+      user.wallet ||
+      (await prisma.wallet.create({
+        data: { userId: user.id },
+      }));
 
-    if (!config) {
-      config = await prisma.platformConfig.create({
-        data: {
-          id: 1,
-          withdrawalDelayDays: 3,
-        },
-      });
-    }
+    // ✅ pricing (same as your UI constants)
+    const TCN_PRICE_USD = 0.01;
+    const TCGOLD_PRICE_USD = 2.5;
 
-    if (!config.btcDepositAddress) {
+    const tcnPerTcg = TCGOLD_PRICE_USD / TCN_PRICE_USD; // 250
+    const costTcn = Math.round(amountTcg * tcnPerTcg);
+
+    if (wallet.balance < costTcn) {
       return NextResponse.json(
-        {
-          error:
-            "BTC deposit address is not configured. Please contact support/admin.",
-        },
+        { error: "Insufficient TCN balance" },
         { status: 400 },
       );
     }
 
-    const btcAddress = config.btcDepositAddress;
-    const usdValueCents = Math.round(tcgAmount * TCG_USD * 100);
-
-    // Ensure wallet exists and sync its BTC deposit address
-    let wallet = user.wallet;
-    if (!wallet) {
-      wallet = await prisma.wallet.create({
+    // ✅ perform trade atomically
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
         data: {
-          userId: user.id,
-          balance: 0,
-          tcGoldBalance: 0,
-          usableUsdCents: 0,
-          btcDepositAddress: btcAddress,
+          balance: { decrement: costTcn },
+          tcGoldBalance: { increment: amountTcg },
         },
       });
-    } else if (!wallet.btcDepositAddress || wallet.btcDepositAddress !== btcAddress) {
-      wallet = await prisma.wallet.update({
-        where: { id: wallet.id },
-        data: { btcDepositAddress: btcAddress },
-      });
-    }
 
-    // Create purchase ledger entry
-    const purchase = await prisma.tcGoldPurchase.create({
-      data: {
-        userId: user.id,
-        tcgAmount,
-        usdValueCents,
-        btcAddress,
-        status: "PENDING",
-      },
+      const transaction = await tx.transaction.create({
+        data: {
+          userId: user.id,
+          walletId: wallet.id,
+          type: "BUY_TCGOLD",
+          amount: amountTcg,
+          status: "SUCCESS",
+          description: `Bought ${amountTcg} TCG for ${costTcn} TCN`,
+        },
+      });
+
+      return { updatedWallet, transaction };
     });
 
     return NextResponse.json({
-      purchase: {
-        id: purchase.id,
-        tcgAmount: purchase.tcgAmount,
-        usdValueCents: purchase.usdValueCents,
-        btcAddress: purchase.btcAddress,
-        status: purchase.status,
-        createdAt: purchase.createdAt,
-      },
-      tcgUsdPrice: TCG_USD,
+      wallet: result.updatedWallet,
+      transaction: result.transaction,
     });
   } catch (err) {
-    console.error("BUY TCGOLD ERROR:", err);
+    console.error(err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

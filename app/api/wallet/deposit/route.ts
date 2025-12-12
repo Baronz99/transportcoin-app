@@ -1,13 +1,11 @@
 // app/api/wallet/deposit/route.ts
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const authUser = getUserFromAuthHeader(authHeader);
+    const authUser = getUserFromAuthHeader(req.headers.get("authorization"));
 
     if (!authUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -46,19 +44,14 @@ export async function POST(req: Request) {
       });
     }
 
-    // Do everything in a transaction for safety
     const result = await prisma.$transaction(async (tx) => {
-      // 1) Update wallet balance
       const updatedWallet = await tx.wallet.update({
         where: { id: wallet!.id },
         data: {
-          balance: {
-            increment: value,
-          },
+          balance: { increment: value },
         },
       });
 
-      // 2) Create linked transaction (NOTE: walletId included)
       const txRecord = await tx.transaction.create({
         data: {
           userId: user.id,

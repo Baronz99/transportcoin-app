@@ -6,8 +6,7 @@ import { getUserFromAuthHeader } from "@/lib/auth";
 
 export async function GET(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const authUser = getUserFromAuthHeader(authHeader);
+    const authUser = getUserFromAuthHeader(req.headers.get("authorization"));
 
     if (!authUser) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -22,9 +21,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ withdrawals });
   } catch (err) {
     console.error("WITHDRAWALS-LIST ERROR:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

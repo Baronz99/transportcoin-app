@@ -1,60 +1,86 @@
+// app/api/trade/sell-tcgold/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
-const TCN_PER_TCGOLD = 250; // 1 TCGold = 250 TCN
-
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization");
-    const authUser = getUserFromAuthHeader(authHeader);
+    // ✅ auth
+    const authHeader = req.headers.get("authorization") || "";
+    const authUser = await getUserFromAuthHeader(authHeader);
 
-    if (!authUser) {
+    if (!authUser?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { amountTcg } = await req.json();
-    const amtTcg = Number(amountTcg);
+    // ✅ body
+    const body = await req.json();
+    const amountTcg = Number(body?.amountTcg);
 
-    if (!amtTcg || amtTcg <= 0) {
-      return NextResponse.json({ error: "Invalid TCGold amount" }, { status: 400 });
-    }
-
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: authUser.userId },
-    });
-
-    if (!wallet || wallet.tcGoldBalance < amtTcg) {
+    if (!amountTcg || amountTcg <= 0 || !Number.isFinite(amountTcg)) {
       return NextResponse.json(
-        { error: "Insufficient TCGold to sell" },
-        { status: 400 }
+        { error: "Amount must be a valid positive number." },
+        { status: 400 },
       );
     }
 
-    const proceedsTcn = amtTcg * TCN_PER_TCGOLD;
-
-    const updatedWallet = await prisma.wallet.update({
-      where: { userId: authUser.userId },
-      data: {
-        tcGoldBalance: { decrement: amtTcg }, // lose TCGold
-        balance: { increment: proceedsTcn },  // gain TCN
-      },
+    // ✅ load user + wallet
+    const user = await prisma.user.findUnique({
+      where: { id: authUser.userId },
+      include: { wallet: true },
     });
 
-    const tx = await prisma.transaction.create({
-      data: {
-        userId: authUser.userId,
-        type: "SELL_TCGOLD",
-        amount: amtTcg,
-        status: "SUCCESS",
-        description: `Sold ${amtTcg} TCGold for ${proceedsTcn} TCN`,
-      },
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const wallet =
+      user.wallet ||
+      (await prisma.wallet.create({
+        data: { userId: user.id },
+      }));
+
+    if (wallet.tcGoldBalance < amountTcg) {
+      return NextResponse.json(
+        { error: "Insufficient TCGold balance" },
+        { status: 400 },
+      );
+    }
+
+    // ✅ pricing
+    const TCN_PRICE_USD = 0.01;
+    const TCGOLD_PRICE_USD = 2.5;
+
+    const tcnPerTcg = TCGOLD_PRICE_USD / TCN_PRICE_USD; // 250
+    const creditTcn = Math.round(amountTcg * tcnPerTcg);
+
+    // ✅ perform trade atomically
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          tcGoldBalance: { decrement: amountTcg },
+          balance: { increment: creditTcn },
+        },
+      });
+
+      const transaction = await tx.transaction.create({
+        data: {
+          userId: user.id,
+          walletId: wallet.id,
+          type: "SELL_TCGOLD",
+          amount: amountTcg,
+          status: "SUCCESS",
+          description: `Sold ${amountTcg} TCG for ${creditTcn} TCN`,
+        },
+      });
+
+      return { updatedWallet, transaction };
     });
 
     return NextResponse.json({
-      message: "TCGold sale successful",
-      wallet: updatedWallet,
-      transaction: tx,
+      wallet: result.updatedWallet,
+      transaction: result.transaction,
     });
   } catch (err) {
     console.error(err);
