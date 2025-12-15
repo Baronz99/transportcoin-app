@@ -81,6 +81,7 @@ model Transaction {
 
   status      String   @default("SUCCESS") // SUCCESS | PENDING | FAILED
   description String?
+  adminNote   String?  // ✅ NEW: Admin note visible to user
   createdAt   DateTime @default(now())
 }
 
