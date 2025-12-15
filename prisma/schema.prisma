@@ -26,6 +26,9 @@ model User {
   withdrawalRequests WithdrawalRequest[]
   transportEvents    TransportEvent[]
   tcGoldPurchases    TcGoldPurchase[]
+
+  // ✅ FIX: Opposite relation for SupportThread.user
+  supportThreads     SupportThread[]
 }
 
 model UserProfile {
@@ -48,16 +51,9 @@ model Wallet {
   userId Int  @unique
   user   User @relation(fields: [userId], references: [id])
 
-  /// Internal transport balance (TCN)
-  balance Int @default(0)
-
-  /// Governance / unlock token (TCGold)
-  tcGoldBalance Int @default(0)
-
-  /// Withdrawable USD balance, stored in cents
-  usableUsdCents Int @default(0)
-
-  /// BTC address for TCGold purchases (can be shared or per user)
+  balance         Int @default(0)
+  tcGoldBalance   Int @default(0)
+  usableUsdCents  Int @default(0)
   btcDepositAddress String?
 
   createdAt DateTime @default(now())
@@ -73,15 +69,12 @@ model Transaction {
   user     User   @relation(fields: [userId], references: [id])
   wallet   Wallet @relation(fields: [walletId], references: [id])
 
-  /// e.g. DEPOSIT, WITHDRAWAL, IMPORT_TO_USABLE, TCG_PURCHASE, ADJUSTMENT
-  type String
-
-  /// Amount in TCN units for now (you can extend later)
+  type   String
   amount Int
 
-  status      String   @default("SUCCESS") // SUCCESS | PENDING | FAILED
+  status      String   @default("SUCCESS")
   description String?
-  adminNote   String?  // ✅ NEW: Admin note visible to user
+  adminNote   String?  // ✅ Admin note visible to user
   createdAt   DateTime @default(now())
 }
 
@@ -90,19 +83,16 @@ model WithdrawalRequest {
   userId Int
   user   User @relation(fields: [userId], references: [id])
 
-  /// Asset + network used for real-world payout
-  asset   String // BTC, ETH, USDT, USDC, BNB, etc.
-  network String // BTC, ERC20, TRC20, BEP20, etc.
+  asset   String
+  network String
   address String
-
-  /// For now we track the amount in TCN; later you can add USD fields
   amountTcn Int
 
-  status    String   @default("PENDING") // PENDING | COMPLETED | REJECTED
+  status    String   @default("PENDING")
   createdAt DateTime @default(now())
-  
-  thread SupportThread?
 
+  // ✅ Optional 1:1 thread linked by SupportThread.withdrawalRequestId
+  thread SupportThread?
 }
 
 model TransportEvent {
@@ -131,52 +121,46 @@ model PlatformConfig {
   updatedAt DateTime @updatedAt
 }
 
-/// Ledger for TCGold purchases funded via BTC
 model TcGoldPurchase {
   id     Int  @id @default(autoincrement())
   userId Int
   user   User @relation(fields: [userId], references: [id])
 
-  /// TCG tokens the user intends to buy
-  tcgAmount Int
-
-  /// USD value at the time of request, stored in cents
+  tcgAmount     Int
   usdValueCents Int
-
-  /// BTC address for this purchase (can match wallet.btcDepositAddress)
-  btcAddress String
-
-  /// BTC transaction ID once confirmed by ops / admin
-  btcTxId String?
-
-  /// PENDING | CONFIRMED | REJECTED
-  status String @default("PENDING")
+  btcAddress    String
+  btcTxId       String?
+  status        String @default("PENDING")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-model SupportThread {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  user        User     @relation(fields: [userId], references: [id])
 
-  // Optional link: connect to a withdrawal (recommended)
+model SupportThread {
+  id        Int      @id @default(autoincrement())
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  // Optional link to a withdrawal request (1:1)
   withdrawalRequestId Int? @unique
   withdrawalRequest   WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id])
 
-  status      String   @default("OPEN") // OPEN | CLOSED
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  status    String   @default("OPEN") // OPEN | CLOSED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  messages    SupportMessage[]
+  messages  SupportMessage[]
 }
 
 model SupportMessage {
   id        Int      @id @default(autoincrement())
+
   threadId  Int
   thread    SupportThread @relation(fields: [threadId], references: [id])
 
   sender    String   // "USER" | "ADMIN"
   body      String
+
   createdAt DateTime @default(now())
 }

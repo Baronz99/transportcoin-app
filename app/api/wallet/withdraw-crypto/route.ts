@@ -1,27 +1,27 @@
 // app/api/wallet/withdraw-crypto/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
+export const dynamic = "force-dynamic";
+
 /**
- * Withdrawal rule:
+ * Withdrawal rule (HOLD only):
  * - User must HOLD at least 1% of withdrawal amount in TCGold.
  *   100,000 TCN => 1,000 TCG
- *   10,000  TCN => 100  TCG
- *   1,000   TCN => 10   TCG
  * - Minimum 1 TCG for any positive withdrawal.
- * - We DO NOT deduct TCG from balance here (hold-only requirement).
+ * - We DO NOT deduct TCG from balance here.
  */
 function requiredTcgForWithdrawal(amountTcn: number) {
   return Math.max(1, Math.ceil(amountTcn / 100)); // 1% of TCN amount
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
     const authUser = getUserFromAuthHeader(authHeader);
 
-    if (!authUser) {
+    if (!authUser?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -60,7 +60,6 @@ export async function POST(req: Request) {
 
     const wallet = user.wallet;
 
-    // Check TCGold HOLD requirement
     const requiredTcg = requiredTcgForWithdrawal(value);
     const currentTcg = wallet.tcGoldBalance ?? 0;
 
@@ -83,13 +82,10 @@ export async function POST(req: Request) {
       );
     }
 
-    // Transaction for consistency
     const result = await prisma.$transaction(async (tx) => {
       const updatedWallet = await tx.wallet.update({
         where: { id: wallet.id },
-        data: {
-          balance: { decrement: value },
-        },
+        data: { balance: { decrement: value } },
       });
 
       const withdrawal = await tx.withdrawalRequest.create({
@@ -118,7 +114,33 @@ export async function POST(req: Request) {
         },
       });
 
-      return { updatedWallet, withdrawal, txRecord };
+      // ✅ Create (or ensure) support thread for this withdrawal
+      const thread = await tx.supportThread.upsert({
+        where: { withdrawalRequestId: withdrawal.id },
+        update: { status: "OPEN" },
+        create: {
+          userId: user.id,
+          withdrawalRequestId: withdrawal.id,
+          status: "OPEN",
+        },
+      });
+
+      // ✅ Add the first message from user (optional but useful)
+      const firstBody =
+        (description && description.trim()) ||
+        `Hi admin, please help with my withdrawal of ${value.toLocaleString()} TCN to ${String(
+          address,
+        ).trim()} (${asset || "BTC"} / ${network || "BTC"}).`;
+
+      await tx.supportMessage.create({
+        data: {
+          threadId: thread.id,
+          sender: "USER",
+          body: firstBody,
+        },
+      });
+
+      return { updatedWallet, withdrawal, txRecord, thread };
     });
 
     return NextResponse.json({
@@ -129,6 +151,7 @@ export async function POST(req: Request) {
       },
       withdrawal: result.withdrawal,
       transaction: result.txRecord,
+      supportThreadId: result.thread.id,
       requiredTcg,
       currentTcg,
     });
