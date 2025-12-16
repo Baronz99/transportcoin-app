@@ -1,4 +1,3 @@
-// app/dashboard/wallets/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,6 +15,7 @@ type Transaction = {
   amount: number;
   status: string;
   description?: string | null;
+  adminNote?: string | null; // ✅ ADDED
   createdAt: string;
 };
 
@@ -199,7 +199,6 @@ export default function WalletsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        // send the exact field your API expects (but API also accepts "amount")
         body: JSON.stringify({ amountTcg: amt }),
       });
 
@@ -218,7 +217,6 @@ export default function WalletsPage() {
         status: p.status,
       });
 
-      // show transaction in history immediately
       if (data.transaction) {
         setTransactions((prev) => [data.transaction, ...prev]);
       }
@@ -275,9 +273,7 @@ export default function WalletsPage() {
           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
             TCN · Transportcoin
           </p>
-          <p className="mt-1 text-lg font-semibold">
-            {wallet?.balance ?? 0} TCN
-          </p>
+          <p className="mt-1 text-lg font-semibold">{wallet?.balance ?? 0} TCN</p>
           <p className="text-xs text-slate-400">
             ~{formatUsd(Math.round((wallet?.balance ?? 0) * TCN_USD * 100))}
           </p>
@@ -287,9 +283,7 @@ export default function WalletsPage() {
           <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
             TCG · TCGold
           </p>
-          <p className="mt-1 text-lg font-semibold">
-            {wallet?.tcGoldBalance ?? 0} TCG
-          </p>
+          <p className="mt-1 text-lg font-semibold">{wallet?.tcGoldBalance ?? 0} TCG</p>
           <p className="text-xs text-slate-400">
             ~{formatUsd(Math.round((wallet?.tcGoldBalance ?? 0) * TCG_USD * 100))}
           </p>
@@ -445,11 +439,6 @@ export default function WalletsPage() {
                     {lastPurchase.btcAddress}
                   </span>
                 </p>
-                <p className="text-[10px] text-amber-200 mt-1">
-                  After funding this address with the corresponding BTC amount,
-                  Transportcoin ops will confirm on-chain and credit your TCGold
-                  balance.
-                </p>
               </div>
             )}
           </div>
@@ -461,6 +450,7 @@ export default function WalletsPage() {
         <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
           Recent Transactions
         </p>
+
         {transactions.length === 0 ? (
           <p className="mt-3 text-sm text-slate-400">
             No wallet activity yet. Once you start purchasing TCGold or
@@ -474,7 +464,7 @@ export default function WalletsPage() {
                   <th className="px-3 py-2">Type</th>
                   <th className="px-3 py-2">Amount</th>
                   <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2">Description</th>
+                  <th className="px-3 py-2">Details</th>
                   <th className="px-3 py-2">Time</th>
                 </tr>
               </thead>
@@ -482,7 +472,7 @@ export default function WalletsPage() {
                 {transactions.map((tx) => (
                   <tr
                     key={tx.id}
-                    className="border-t border-slate-900 hover:bg-slate-900/60"
+                    className="border-t border-slate-900 hover:bg-slate-900/60 align-top"
                   >
                     <td className="px-3 py-2">{tx.type}</td>
                     <td className="px-3 py-2">{tx.amount}</td>
@@ -499,7 +489,23 @@ export default function WalletsPage() {
                         {tx.status}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-slate-300">{tx.description || "—"}</td>
+
+                    <td className="px-3 py-2 text-slate-300">
+                      <div className="space-y-1">
+                        <div>{tx.description || "—"}</div>
+
+                        {/* ✅ ADMIN NOTE */}
+                        {tx.adminNote && tx.adminNote.trim().length > 0 && (
+                          <div className="rounded-lg border border-amber-800/60 bg-amber-950/30 px-2 py-1 text-[10px] text-amber-200">
+                            <span className="font-semibold text-amber-300">
+                              Admin note:
+                            </span>{" "}
+                            {tx.adminNote}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+
                     <td className="px-3 py-2 text-[10px] text-slate-500">
                       {new Date(tx.createdAt).toLocaleString()}
                     </td>

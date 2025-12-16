@@ -15,6 +15,7 @@ type Transaction = {
   type: string;
   status: string;
   description?: string | null;
+  adminNote?: string | null; // ✅ ADDED
   createdAt: string;
 };
 
@@ -383,15 +384,28 @@ export default function DashboardPage() {
                       <p className="font-medium text-slate-100">
                         {formatType(tx.type)}
                       </p>
+
                       {tx.description && (
                         <p className="text-[11px] text-slate-400">
                           {tx.description}
                         </p>
                       )}
+
+                      {/* ✅ ADMIN NOTE (visible to user) */}
+                      {tx.adminNote && tx.adminNote.trim().length > 0 && (
+                        <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 px-2 py-2 text-[11px] text-amber-200">
+                          <span className="font-semibold text-amber-300">
+                            Admin note:
+                          </span>{" "}
+                          {tx.adminNote}
+                        </div>
+                      )}
+
                       <p className="text-[11px] text-slate-500">
                         {formatDateTime(tx.createdAt)}
                       </p>
                     </div>
+
                     <div className="flex flex-col items-end gap-1">
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusChipClasses(
