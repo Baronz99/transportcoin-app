@@ -32,11 +32,20 @@ export async function GET(req: Request) {
       },
     });
 
-    // Get latest transactions for this user
+    // Get latest transactions for this user (include adminNote)
     const transactions = await prisma.transaction.findMany({
       where: { userId: authUser.userId },
       orderBy: { createdAt: "desc" },
       take: 20,
+      select: {
+        id: true,
+        amount: true,
+        type: true,
+        status: true,
+        description: true,
+        adminNote: true, // ✅ IMPORTANT
+        createdAt: true,
+      },
     });
 
     return NextResponse.json({
