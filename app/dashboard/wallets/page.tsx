@@ -1,3 +1,4 @@
+// app/dashboard/wallets/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -57,6 +58,7 @@ export default function WalletsPage() {
   const [lastPurchase, setLastPurchase] = useState<LastPurchase | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [openingThreadId, setOpeningThreadId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const token =
@@ -73,17 +75,20 @@ export default function WalletsPage() {
     try {
       const res = await fetch("/api/wallet/summary", {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "Failed to load wallet.");
         return;
       }
+
       setWallet({
         balance: data.wallet.balance,
         tcGoldBalance: data.wallet.tcGoldBalance ?? 0,
         usableUsdCents: data.wallet.usableUsdCents ?? 0,
       });
+
       setTransactions(data.transactions || []);
     } catch (err) {
       console.error(err);
@@ -231,6 +236,39 @@ export default function WalletsPage() {
     }
   };
 
+  // ✅ NEW: open (or create) support thread for a withdrawal transaction
+  const openSupportThreadForTransaction = async (transactionId: number) => {
+    if (!token) return;
+
+    setOpeningThreadId(transactionId);
+
+    try {
+      const res = await fetch("/api/support/thread-for-transaction", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ transactionId }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data?.error || "Failed to open support thread.");
+        return;
+      }
+
+      // Expecting { threadId, withdrawalRequestId }
+      router.push(`/dashboard/support/threads/${data.threadId}`);
+    } catch (err) {
+      console.error(err);
+      alert("Network error opening support thread.");
+    } finally {
+      setOpeningThreadId(null);
+    }
+  };
+
   const totalUsd =
     (wallet?.usableUsdCents ?? 0) / 100 +
     (wallet?.balance ?? 0) * TCN_USD +
@@ -298,8 +336,8 @@ export default function WalletsPage() {
             Request Crypto Withdrawal
           </p>
           <p className="mt-1 text-xs text-slate-300">
-            Withdrawals require holding TCGold equal to <b>1% of the withdrawal amount</b>{" "}
-            (e.g. 100,000 TCN → 1,000 TCG).
+            Withdrawals require holding TCGold equal to{" "}
+            <b>1% of the withdrawal amount</b> (e.g. 100,000 TCN → 1,000 TCG).
           </p>
 
           <div className="mt-4 space-y-3 text-xs">
@@ -503,6 +541,22 @@ export default function WalletsPage() {
                             {tx.adminNote}
                           </div>
                         )}
+
+                        {/* ✅ MESSAGE ADMIN (only for pending withdrawals) */}
+                        {tx.type === "WITHDRAW_CRYPTO_REQUEST" &&
+                          tx.status === "PENDING" && (
+                            <button
+                              onClick={() =>
+                                openSupportThreadForTransaction(tx.id)
+                              }
+                              disabled={openingThreadId === tx.id}
+                              className="mt-2 rounded-lg border border-gold/50 bg-black/40 px-2 py-1 text-[10px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
+                            >
+                              {openingThreadId === tx.id
+                                ? "Opening…"
+                                : "Message admin"}
+                            </button>
+                          )}
                       </div>
                     </td>
 
