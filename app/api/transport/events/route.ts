@@ -1,5 +1,3 @@
-// app/api/transport/events/route.ts
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
@@ -9,23 +7,17 @@ export async function GET(req: Request) {
     const authHeader = req.headers.get("authorization");
     const authUser = getUserFromAuthHeader(authHeader);
 
-    if (!authUser) {
+    if (!authUser?.userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: authUser.userId },
-      select: { id: true },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 401 });
-    }
-
+    // 🔑 IMPORTANT:
+    // - Return enough history for aggregates
+    // - Do NOT filter out reward events
     const events = await prisma.transportEvent.findMany({
-      where: { userId: user.id },
+      where: { userId: authUser.userId },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: 500, // ← increase window (safe for SQLite)
     });
 
     return NextResponse.json({ events });
