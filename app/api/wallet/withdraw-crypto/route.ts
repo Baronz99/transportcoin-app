@@ -83,11 +83,13 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      // 1) Deduct TCN from wallet
       const updatedWallet = await tx.wallet.update({
         where: { id: wallet.id },
         data: { balance: { decrement: value } },
       });
 
+      // 2) Create the WithdrawalRequest (admin ops record)
       const withdrawal = await tx.withdrawalRequest.create({
         data: {
           userId: user.id,
@@ -99,6 +101,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // 3) Create transaction history row (user-visible)
       const txRecord = await tx.transaction.create({
         data: {
           userId: user.id,
@@ -114,7 +117,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // ✅ Create (or ensure) support thread for this withdrawal
+      // 4) Ensure a SupportThread exists for this withdrawal
+      //    (upsert prevents duplicates if something retries)
       const thread = await tx.supportThread.upsert({
         where: { withdrawalRequestId: withdrawal.id },
         update: { status: "OPEN" },
@@ -125,7 +129,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // ✅ Add the first message from user (optional but useful)
+      // 5) Optional: create first message from the user
       const firstBody =
         (description && description.trim()) ||
         `Hi admin, please help with my withdrawal of ${value.toLocaleString()} TCN to ${String(
