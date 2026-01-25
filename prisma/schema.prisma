@@ -26,6 +26,7 @@ model User {
   withdrawalRequests WithdrawalRequest[]
   transportEvents    TransportEvent[]
   tcGoldPurchases    TcGoldPurchase[]
+  withdrawalAuditLogs WithdrawalAuditLog[]
 
   // ✅ FIX: Opposite relation for SupportThread.user
   supportThreads     SupportThread[]
@@ -93,6 +94,8 @@ model WithdrawalRequest {
 
   // ✅ Optional 1:1 thread linked by SupportThread.withdrawalRequestId
   thread SupportThread?
+
+  withdrawalAuditLogs WithdrawalAuditLog[]
 }
 
 model TransportEvent {
@@ -163,4 +166,24 @@ model SupportMessage {
   body      String
 
   createdAt DateTime @default(now())
+}
+
+enum WithdrawalAuditStatus {
+  PASS
+  FAIL
+}
+
+model WithdrawalAuditLog {
+  id                  Int      @id @default(autoincrement())
+  userId              Int
+  user                User     @relation(fields: [userId], references: [id])
+  withdrawalRequestId Int?
+  withdrawalRequest   WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id])
+
+  amountTcnSnapshot Int
+  requiredTcg       Int
+  currentTcg        Int
+  deficitTcg        Int
+  result            WithdrawalAuditStatus
+  createdAt   DateTime @default(now())
 }
