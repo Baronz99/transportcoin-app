@@ -73,6 +73,20 @@ export default function WithdrawalPreflightModal({
 }: Props) {
   if (!isOpen) return null;
 
+  const computeSpendable = (log: WithdrawalAudit) => {
+    if (Number.isFinite(log.availableTcg)) return log.availableTcg;
+    if (Number.isFinite(log.reserveFloorTcg)) {
+      return Math.max(0, log.currentTcg - log.reserveFloorTcg);
+    }
+    return log.currentTcg;
+  };
+
+  const spendable = breakdown
+    ? Math.max(0, breakdown.availableTcg)
+    : audit
+    ? computeSpendable(audit)
+    : null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8">
       <div className="w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl">
@@ -98,7 +112,9 @@ export default function WithdrawalPreflightModal({
             <div className="rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-[11px] text-slate-400">Pending withdrawal</p>
+                  <p className="text-[11px] text-slate-400">
+                    Your Withdrawal Goal
+                  </p>
                   <p className="mt-1 text-sm font-semibold text-slate-100">
                     {withdrawal.amountTcn.toLocaleString()} TCN -{" "}
                     {withdrawal.asset}/{withdrawal.network}
@@ -114,6 +130,10 @@ export default function WithdrawalPreflightModal({
               </div>
               <p className="mt-2 text-[11px] text-slate-500">
                 Requested at {new Date(withdrawal.createdAt).toLocaleString()}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Goal: Maintain {breakdown?.reserveFloorTcg ?? 800} TCG reserve +
+                hold 1% of the withdrawal in spendable TCG.
               </p>
             </div>
           ) : (
@@ -143,9 +163,15 @@ export default function WithdrawalPreflightModal({
               {releaseLoading ? "Releasing..." : "Release Withdrawal"}
             </button>
             <p className="text-[11px] text-slate-500">
-              Release queues payout processing; it does not pay instantly.
+              Release triggers payout immediately (once requirements pass).
             </p>
           </div>
+
+          {!audit && withdrawal && (
+            <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
+              Run audit to check requirements and unlock Release.
+            </div>
+          )}
 
           {error && (
             <div className="rounded-xl border border-rose-800 bg-rose-950/50 px-3 py-2 text-[11px] text-rose-200">
@@ -172,76 +198,92 @@ export default function WithdrawalPreflightModal({
           )}
 
           {audit && breakdown && (
-            <div className="rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] text-slate-400">Latest audit result</p>
-                <span
-                  className={
-                    audit.result === "PASS"
-                      ? "rounded-full bg-emerald-900/50 px-2 py-0.5 text-[10px] text-emerald-200"
-                      : "rounded-full bg-rose-900/50 px-2 py-0.5 text-[10px] text-rose-200"
-                  }
-                >
-                  {audit.result}
-                </span>
-              </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                {breakdown.rulesText}
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Tier
+            <>
+              <div className="rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-slate-400">
+                    Your TCG Balances
                   </p>
-                  <p className="mt-1 text-sm text-slate-200">
+                  <span className="text-[10px] text-slate-500">
                     {breakdown.tierSnapshot}
-                  </p>
+                  </span>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Reserve Floor
-                  </p>
-                  <p className="mt-1 text-sm text-slate-200">
-                    {breakdown.reserveFloorTcg.toLocaleString()} TCG
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Current TCG
-                  </p>
-                  <p className="mt-1 text-sm text-slate-200">
-                    {breakdown.currentTcg.toLocaleString()} TCG
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Available TCG
-                  </p>
-                  <p className="mt-1 text-sm text-gold">
-                    {breakdown.availableTcg.toLocaleString()} TCG
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Required TCG
-                  </p>
-                  <p className="mt-1 text-sm text-gold">
-                    {breakdown.requiredTcg.toLocaleString()} TCG
-                  </p>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                    Deficit
-                  </p>
-                  <p className="mt-1 text-sm text-amber-200">
-                    {breakdown.deficitTcg.toLocaleString()} TCG
-                  </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Locked (Reserve)
+                    </p>
+                    <p className="mt-1 text-sm text-slate-200">
+                      {breakdown.reserveFloorTcg.toLocaleString()} TCG
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Spendable
+                    </p>
+                    <p className="mt-1 text-sm text-gold">
+                      {spendable?.toLocaleString()} TCG
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Total
+                    </p>
+                    <p className="mt-1 text-sm text-slate-200">
+                      {breakdown.currentTcg.toLocaleString()} TCG
+                    </p>
+                  </div>
                 </div>
               </div>
-              <p className="mt-2 text-[10px] text-slate-500">
-                {new Date(audit.createdAt).toLocaleString()}
-              </p>
-            </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] text-slate-400">
+                    Withdrawal Hold Requirement
+                  </p>
+                  <span
+                    className={
+                      audit.result === "PASS"
+                        ? "rounded-full bg-emerald-900/50 px-2 py-0.5 text-[10px] text-emerald-200"
+                        : "rounded-full bg-rose-900/50 px-2 py-0.5 text-[10px] text-rose-200"
+                    }
+                  >
+                    {audit.result}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Required TCG (1%)
+                    </p>
+                    <p className="mt-1 text-sm text-gold">
+                      {breakdown.requiredTcg.toLocaleString()} TCG
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                      Deficit
+                    </p>
+                    <p className="mt-1 text-sm text-amber-200">
+                      {breakdown.deficitTcg.toLocaleString()} TCG
+                    </p>
+                  </div>
+                </div>
+                {audit.result === "FAIL" ? (
+                  <p className="mt-2 text-[11px] text-amber-200">
+                    Top up {breakdown.deficitTcg.toLocaleString()} TCG to
+                    release immediately.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-[11px] text-emerald-200">
+                    You meet requirements. You can release payout now.
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] text-slate-500">
+                  {new Date(audit.createdAt).toLocaleString()}
+                </p>
+              </div>
+            </>
           )}
 
           <div>
@@ -258,7 +300,7 @@ export default function WithdrawalPreflightModal({
                   <thead className="bg-slate-900/90 text-[10px] uppercase tracking-[0.14em] text-slate-500">
                     <tr>
                       <th className="px-3 py-2">Result</th>
-                      <th className="px-3 py-2">Available</th>
+                      <th className="px-3 py-2">Spendable</th>
                       <th className="px-3 py-2">Required</th>
                       <th className="px-3 py-2">Deficit</th>
                       <th className="px-3 py-2">Time</th>
@@ -282,7 +324,7 @@ export default function WithdrawalPreflightModal({
                           </span>
                         </td>
                         <td className="px-3 py-2">
-                          {log.availableTcg.toLocaleString()} TCG
+                          {computeSpendable(log).toLocaleString()} TCG
                         </td>
                         <td className="px-3 py-2">
                           {log.requiredTcg.toLocaleString()} TCG

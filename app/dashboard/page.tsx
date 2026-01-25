@@ -346,7 +346,7 @@ export default function DashboardPage() {
       }
 
       setReleaseMessage(data.message || "Withdrawal released.");
-      setToastMessage("Withdrawal released for payout processing.");
+      setToastMessage("Withdrawal released. Payout is being sent now.");
       setTimeout(() => setToastMessage(null), 4000);
       setAudit(null);
       setBreakdown(null);
