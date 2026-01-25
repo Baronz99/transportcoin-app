@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { withdrawalStatusChipClasses, withdrawalStatusLabel } from "@/lib/withdrawalStatus";
 
 type SupportMessage = {
   id: number;
@@ -148,8 +149,12 @@ export default function SupportThreadPage() {
                 <p className="font-semibold text-slate-100">
                   Withdrawal #{thread.withdrawalRequest.id}
                 </p>
-                <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300">
-                  {thread.withdrawalRequest.status}
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] ${withdrawalStatusChipClasses(
+                    thread.withdrawalRequest.status,
+                  )}`}
+                >
+                  {withdrawalStatusLabel(thread.withdrawalRequest.status)}
                 </span>
               </div>
               <p className="mt-1 text-[11px] text-slate-400">

@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { TCN_PRICE_USD_CENTS, TCGOLD_PRICE_USD_CENTS } from "@/lib/prices";
+import WithdrawalPreflightModal from "@/components/WithdrawalPreflightModal";
 
 type Wallet = {
   balance: number;
@@ -20,6 +21,7 @@ type Transaction = {
 };
 
 type UserMeta = {
+  id: number;
   email: string;
   tier?: string | null;
   lastLoginAt?: string | null;
@@ -28,6 +30,41 @@ type UserMeta = {
 type Profile = {
   fullName?: string | null;
   country?: string | null;
+};
+
+type PendingWithdrawal = {
+  id: number;
+  amountTcn: number;
+  asset: string;
+  network: string;
+  status: string;
+  createdAt: string;
+};
+
+type WithdrawalAuditStatus = "PASS" | "FAIL";
+
+type WithdrawalAudit = {
+  id: number;
+  withdrawalRequestId: number | null;
+  amountTcnSnapshot: number;
+  tierSnapshot: string;
+  reserveFloorTcg: number;
+  requiredTcg: number;
+  currentTcg: number;
+  availableTcg: number;
+  deficitTcg: number;
+  result: WithdrawalAuditStatus;
+  createdAt: string;
+};
+
+type AuditBreakdown = {
+  tierSnapshot: string;
+  reserveFloorTcg: number;
+  currentTcg: number;
+  availableTcg: number;
+  requiredTcg: number;
+  deficitTcg: number;
+  rulesText: string;
 };
 
 const fmtUsdFromCents = (cents: number) =>
@@ -81,11 +118,45 @@ export default function DashboardPage() {
   const [slaDays, setSlaDays] = useState<number | null>(null);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingWithdrawal, setPendingWithdrawal] =
+    useState<PendingWithdrawal | null>(null);
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [audit, setAudit] = useState<WithdrawalAudit | null>(null);
+  const [breakdown, setBreakdown] = useState<AuditBreakdown | null>(null);
+  const [auditLogs, setAuditLogs] = useState<WithdrawalAudit[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+  const [auditMessage, setAuditMessage] = useState<string | null>(null);
+  const [releaseLoading, setReleaseLoading] = useState(false);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const [releaseMessage, setReleaseMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("transportcoin_token")
       : null;
+
+  const dismissalKey = userMeta?.id
+    ? `withdrawalPreflightDismissedId:${userMeta.id}`
+    : null;
+
+  const getDismissedId = () => {
+    if (!dismissalKey || typeof window === "undefined") return null;
+    const value = localStorage.getItem(dismissalKey);
+    const parsed = Number(value);
+    if (!value || !Number.isInteger(parsed) || parsed <= 0) return null;
+    return parsed;
+  };
+
+  const setDismissedId = (withdrawalId: number | null) => {
+    if (!dismissalKey || typeof window === "undefined") return;
+    if (!withdrawalId) {
+      localStorage.removeItem(dismissalKey);
+      return;
+    }
+    localStorage.setItem(dismissalKey, String(withdrawalId));
+  };
 
   // Redirect if not logged in
   useEffect(() => {
@@ -129,6 +200,7 @@ export default function DashboardPage() {
         } else {
           if (profileData.user) {
             setUserMeta({
+              id: profileData.user.id,
               email: profileData.user.email,
               tier: profileData.user.tier,
               lastLoginAt: profileData.user.lastLoginAt,
@@ -163,6 +235,147 @@ export default function DashboardPage() {
 
     load();
   }, [token, router]);
+
+  const loadPendingWithdrawal = async () => {
+    if (!token || !userMeta?.id) return;
+    try {
+      const res = await fetch("/api/wallet/withdrawals/pending-latest", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return;
+      }
+      const nextWithdrawal = data.withdrawal ?? null;
+      setPendingWithdrawal(nextWithdrawal);
+      if (!nextWithdrawal) {
+        setPreflightOpen(false);
+        setDismissedId(null);
+        return;
+      }
+      const dismissedId = getDismissedId();
+      if (dismissedId !== nextWithdrawal.id) {
+        setPreflightOpen(true);
+      } else {
+        setPreflightOpen(false);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadAuditLogs = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/wallet/withdrawals/audit/logs", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuditLogs([]);
+        return;
+      }
+      setAuditLogs(data.logs || []);
+    } catch (err) {
+      console.error(err);
+      setAuditLogs([]);
+    }
+  };
+
+  const runWithdrawalAudit = async () => {
+    if (!token) return;
+    setAuditLoading(true);
+    setAuditError(null);
+    setAuditMessage(null);
+    setReleaseError(null);
+    setReleaseMessage(null);
+
+    try {
+      const res = await fetch("/api/wallet/withdrawals/audit", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAudit(null);
+        setBreakdown(null);
+        setAuditError(data.error || "Withdrawal audit failed.");
+        return;
+      }
+      setAudit(data.audit || null);
+      setBreakdown(data.breakdown || null);
+      setAuditMessage(data.message || null);
+      if (data.withdrawal) {
+        setPendingWithdrawal(data.withdrawal);
+      }
+      await loadAuditLogs();
+    } catch (err) {
+      console.error(err);
+      setAuditError("Network error running withdrawal audit.");
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const releaseWithdrawal = async () => {
+    if (!token || !pendingWithdrawal) return;
+    setReleaseLoading(true);
+    setReleaseError(null);
+    setReleaseMessage(null);
+
+    try {
+      const res = await fetch("/api/wallet/withdrawals/release", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ withdrawalId: pendingWithdrawal.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 409) {
+          setBreakdown(data.breakdown || null);
+          setReleaseError(data.message || "Release check failed.");
+          return;
+        }
+        setReleaseError(data.error || "Failed to release withdrawal.");
+        return;
+      }
+
+      setReleaseMessage(data.message || "Withdrawal released.");
+      setToastMessage("Withdrawal released for payout processing.");
+      setTimeout(() => setToastMessage(null), 4000);
+      setAudit(null);
+      setBreakdown(null);
+      setPendingWithdrawal(null);
+      setPreflightOpen(false);
+      setDismissedId(null);
+      await loadAuditLogs();
+    } catch (err) {
+      console.error(err);
+      setReleaseError("Network error releasing withdrawal.");
+    } finally {
+      setReleaseLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPendingWithdrawal();
+    loadAuditLogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, userMeta?.id]);
+
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(() => {
+      loadPendingWithdrawal();
+    }, 60000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, userMeta?.id]);
 
   const tcnBalance = wallet?.balance ?? 0;
   const tcgBalance = wallet?.tcGoldBalance ?? 0;
@@ -233,6 +446,28 @@ export default function DashboardPage() {
           </span>
         </div>
       </div>
+
+      {pendingWithdrawal && !preflightOpen && (
+        <div className="mb-5 rounded-2xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-xs text-amber-100">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-amber-200">
+                Withdrawal pre-flight check
+              </p>
+              <p className="mt-1 text-[11px] text-amber-100">
+                You have a pending withdrawal. Resume the pre-flight check to
+                review and release it for payout.
+              </p>
+            </div>
+            <button
+              onClick={() => setPreflightOpen(true)}
+              className="rounded-full border border-amber-400 px-3 py-2 text-[11px] font-semibold text-amber-200 hover:bg-amber-400/10"
+            >
+              Resume Withdrawal
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* HERO + STATUS STRIP */}
       <section className="grid gap-4 md:grid-cols-[minmax(0,2.2fr)_minmax(0,1.4fr)]">
@@ -473,6 +708,34 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      <WithdrawalPreflightModal
+        isOpen={preflightOpen}
+        onClose={() => {
+          setPreflightOpen(false);
+          if (pendingWithdrawal) {
+            setDismissedId(pendingWithdrawal.id);
+          }
+        }}
+        withdrawal={pendingWithdrawal}
+        audit={audit}
+        breakdown={breakdown}
+        logs={auditLogs}
+        auditLoading={auditLoading}
+        releaseLoading={releaseLoading}
+        onRunAudit={runWithdrawalAudit}
+        onRelease={releaseWithdrawal}
+        message={auditMessage}
+        error={auditError}
+        releaseMessage={releaseMessage}
+        releaseError={releaseError}
+      />
+
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-40 rounded-2xl border border-emerald-700/60 bg-emerald-950/70 px-4 py-3 text-xs text-emerald-200 shadow-xl">
+          {toastMessage}
+        </div>
+      )}
     </main>
   );
 }

@@ -2,22 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
-// Reject a withdrawal request
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // ✅ Auth
     const authHeader = request.headers.get("authorization") || "";
-    const authUser = await getUserFromAuthHeader(authHeader);
+    const authUser = getUserFromAuthHeader(authHeader);
 
-    // Adjust this check to match your auth payload shape.
     if (!authUser || !(authUser as any).isAdmin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // ✅ Next.js 16 typed routes: params is a Promise
     const { id } = await params;
     const withdrawalId = Number(id);
     if (!withdrawalId || Number.isNaN(withdrawalId)) {
@@ -38,13 +34,13 @@ export async function POST(
       return NextResponse.json({ error: "Withdrawal not found" }, { status: 404 });
     }
 
-    if (wr.status === "REJECTED" || wr.status === "COMPLETED") {
+    if (wr.status === "COMPLETED" || wr.status === "REJECTED") {
       return NextResponse.json({ success: true, withdrawal: wr });
     }
 
-    if (wr.status !== "PENDING" && wr.status !== "READY_FOR_PAYOUT") {
+    if (wr.status !== "READY_FOR_PAYOUT") {
       return NextResponse.json(
-        { error: `Withdrawal is ${wr.status} and cannot be rejected.` },
+        { error: `Withdrawal is ${wr.status} and cannot be marked paid.` },
         { status: 409 },
       );
     }
@@ -52,14 +48,14 @@ export async function POST(
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.withdrawalRequest.update({
         where: { id: withdrawalId },
-        data: { status: "REJECTED" },
+        data: { status: "COMPLETED" },
       });
 
       await tx.withdrawalStatusLog.create({
         data: {
           withdrawalRequestId: withdrawalId,
           previousStatus: wr.status,
-          newStatus: "REJECTED",
+          newStatus: "COMPLETED",
           adminUserId: authUser.userId,
           note,
         },
@@ -70,7 +66,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, withdrawal: result });
   } catch (err) {
-    console.error("reject withdrawal error:", err);
+    console.error("MARK PAID ERROR:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

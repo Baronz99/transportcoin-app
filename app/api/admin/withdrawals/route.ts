@@ -18,7 +18,14 @@ export async function GET(req: Request) {
 
     const withdrawals = await prisma.withdrawalRequest.findMany({
       where: { status },
-      include: { user: { select: { email: true } } },
+      include: {
+        user: { select: { email: true } },
+        statusLogs: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          include: { adminUser: { select: { email: true } } },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
 

@@ -27,6 +27,7 @@ model User {
   transportEvents    TransportEvent[]
   tcGoldPurchases    TcGoldPurchase[]
   withdrawalAuditLogs WithdrawalAuditLog[]
+  adminWithdrawalStatusLogs WithdrawalStatusLog[] @relation("AdminWithdrawalStatusLogs")
 
   // ✅ FIX: Opposite relation for SupportThread.user
   supportThreads     SupportThread[]
@@ -96,6 +97,7 @@ model WithdrawalRequest {
   thread SupportThread?
 
   withdrawalAuditLogs WithdrawalAuditLog[]
+  statusLogs WithdrawalStatusLog[]
 }
 
 model TransportEvent {
@@ -181,9 +183,24 @@ model WithdrawalAuditLog {
   withdrawalRequest   WithdrawalRequest? @relation(fields: [withdrawalRequestId], references: [id])
 
   amountTcnSnapshot Int
+  tierSnapshot      String
+  reserveFloorTcg   Int
   requiredTcg       Int
   currentTcg        Int
+  availableTcg      Int
   deficitTcg        Int
   result            WithdrawalAuditStatus
   createdAt   DateTime @default(now())
+}
+
+model WithdrawalStatusLog {
+  id                  Int      @id @default(autoincrement())
+  withdrawalRequestId Int
+  withdrawalRequest   WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id])
+  previousStatus      String
+  newStatus           String
+  adminUserId         Int
+  adminUser           User     @relation("AdminWithdrawalStatusLogs", fields: [adminUserId], references: [id])
+  note                String
+  createdAt           DateTime @default(now())
 }

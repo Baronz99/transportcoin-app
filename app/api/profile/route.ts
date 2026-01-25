@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
       prisma.user.findUnique({
         where: { id: authUser.userId },
         select: {
+          id: true,
           email: true,
           tier: true,
           createdAt: true,
@@ -102,6 +103,7 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.findUnique({
       where: { id: authUser.userId },
       select: {
+        id: true,
         email: true,
         tier: true,
         createdAt: true,

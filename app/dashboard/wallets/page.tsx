@@ -28,30 +28,6 @@ type LastPurchase = {
   status: string;
 };
 
-type WithdrawalAuditStatus = "PASS" | "FAIL";
-
-type WithdrawalAuditLog = {
-  id: number;
-  withdrawalRequestId: number | null;
-  amountTcnSnapshot: number;
-  requiredTcg: number;
-  currentTcg: number;
-  deficitTcg: number;
-  result: WithdrawalAuditStatus;
-  createdAt: string;
-};
-
-type WithdrawalAuditSummary = WithdrawalAuditLog;
-
-type WithdrawalAuditTarget = {
-  id: number;
-  amountTcn: number;
-  asset: string;
-  network: string;
-  status: string;
-  createdAt: string;
-};
-
 // IMPORTANT: You said TCN = $1
 const TCN_USD = 1;
 const TCG_USD = 2.5;
@@ -84,16 +60,6 @@ export default function WalletsPage() {
   const [loading, setLoading] = useState(false);
   const [openingThreadId, setOpeningThreadId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [auditSummary, setAuditSummary] = useState<WithdrawalAuditSummary | null>(
-    null,
-  );
-  const [auditTarget, setAuditTarget] = useState<WithdrawalAuditTarget | null>(
-    null,
-  );
-  const [auditLogs, setAuditLogs] = useState<WithdrawalAuditLog[]>([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
-  const [auditMessage, setAuditMessage] = useState<string | null>(null);
 
   const token =
     typeof window !== "undefined"
@@ -130,28 +96,8 @@ export default function WalletsPage() {
     }
   };
 
-  const loadAuditLogs = async () => {
-    if (!token) return;
-    try {
-      const res = await fetch("/api/wallet/withdrawals/audit/logs", {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setAuditLogs([]);
-        return;
-      }
-      setAuditLogs(data.logs || []);
-    } catch (err) {
-      console.error(err);
-      setAuditLogs([]);
-    }
-  };
-
   useEffect(() => {
     loadSummary();
-    loadAuditLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -320,41 +266,6 @@ export default function WalletsPage() {
       alert("Network error opening support thread.");
     } finally {
       setOpeningThreadId(null);
-    }
-  };
-
-  // -------- Withdrawal audit (read-only) --------
-  const runWithdrawalAudit = async () => {
-    if (!token) return;
-
-    setAuditLoading(true);
-    setAuditError(null);
-    setAuditMessage(null);
-
-    try {
-      const res = await fetch("/api/wallet/withdrawals/audit", {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setAuditSummary(null);
-        setAuditTarget(null);
-        setAuditLogs([]);
-        setAuditError(data.error || "Withdrawal audit failed.");
-        return;
-      }
-
-      setAuditSummary(data.audit || null);
-      setAuditTarget(data.withdrawal || null);
-      setAuditMessage(data.message || null);
-      await loadAuditLogs();
-    } catch (err) {
-      console.error(err);
-      setAuditError("Network error running withdrawal audit.");
-    } finally {
-      setAuditLoading(false);
     }
   };
 
@@ -569,155 +480,6 @@ export default function WalletsPage() {
               </div>
             )}
           </div>
-        </div>
-      </section>
-
-      {/* Withdrawal Audit */}
-      <section className="mb-10 rounded-3xl border border-slate-800 bg-slate-950/80 p-5 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-              Withdrawal Audit (Pre-flight Check)
-            </p>
-            <p className="mt-1 text-xs text-slate-300">
-              Dry-run check for your latest pending withdrawal. No balances or
-              statuses are changed.
-            </p>
-          </div>
-          <button
-            onClick={runWithdrawalAudit}
-            disabled={auditLoading}
-            className="rounded-full border border-gold px-3 py-2 text-[11px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
-          >
-            {auditLoading ? "Running..." : "Run Withdrawal Audit"}
-          </button>
-        </div>
-
-        {auditError && (
-          <div className="mt-3 rounded-xl border border-rose-800 bg-rose-950/50 px-3 py-2 text-[11px] text-rose-200">
-            {auditError}
-          </div>
-        )}
-
-        {auditMessage && !auditError && (
-          <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
-            {auditMessage}
-          </div>
-        )}
-
-        {auditSummary && (
-          <div className="mt-4 rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[11px] text-slate-400">
-                Latest audit for withdrawal #{auditSummary.withdrawalRequestId}
-              </p>
-              <span
-                className={
-                  auditSummary.result === "PASS"
-                    ? "rounded-full bg-emerald-900/50 px-2 py-0.5 text-[10px] text-emerald-200"
-                    : "rounded-full bg-rose-900/50 px-2 py-0.5 text-[10px] text-rose-200"
-                }
-              >
-                {auditSummary.result}
-              </span>
-            </div>
-            {auditTarget && (
-              <p className="mt-2 text-[11px] text-slate-500">
-                {auditTarget.amountTcn.toLocaleString()} TCN -{" "}
-                {auditTarget.asset}/{auditTarget.network}
-              </p>
-            )}
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  Required TCG
-                </p>
-                <p className="mt-1 text-sm text-gold">
-                  {auditSummary.requiredTcg.toLocaleString()} TCG
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  Current TCG
-                </p>
-                <p className="mt-1 text-sm text-slate-200">
-                  {auditSummary.currentTcg.toLocaleString()} TCG
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  Deficit
-                </p>
-                <p className="mt-1 text-sm text-amber-200">
-                  {auditSummary.deficitTcg.toLocaleString()} TCG
-                </p>
-              </div>
-            </div>
-            <p className="mt-2 text-[10px] text-slate-500">
-              {new Date(auditSummary.createdAt).toLocaleString()}
-            </p>
-          </div>
-        )}
-
-        <div className="mt-4">
-          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
-            Last 5 Audit Logs
-          </p>
-          {auditLogs.length === 0 ? (
-            <p className="mt-2 text-[11px] text-slate-500">
-              No audit logs yet. Run an audit to generate logs.
-            </p>
-          ) : (
-            <div className="mt-3 max-h-[260px] overflow-auto rounded-2xl border border-slate-900">
-              <table className="min-w-full text-left text-[11px]">
-                <thead className="bg-slate-900/90 text-[10px] uppercase tracking-[0.14em] text-slate-500">
-                  <tr>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2">Withdrawal</th>
-                    <th className="px-3 py-2">Required</th>
-                    <th className="px-3 py-2">Current</th>
-                    <th className="px-3 py-2">Deficit</th>
-                    <th className="px-3 py-2">Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((log) => (
-                    <tr
-                      key={log.id}
-                      className="border-t border-slate-900 hover:bg-slate-900/60"
-                    >
-                      <td className="px-3 py-2">
-                        <span
-                          className={
-                            log.result === "PASS"
-                              ? "rounded-full bg-emerald-900/50 px-2 py-0.5 text-emerald-200"
-                              : "rounded-full bg-rose-900/50 px-2 py-0.5 text-rose-200"
-                          }
-                        >
-                          {log.result}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2">
-                        {log.withdrawalRequestId ?? "---"}
-                      </td>
-                      <td className="px-3 py-2">
-                        {log.requiredTcg.toLocaleString()} TCG
-                      </td>
-                      <td className="px-3 py-2">
-                        {log.currentTcg.toLocaleString()} TCG
-                      </td>
-                      <td className="px-3 py-2">
-                        {log.deficitTcg.toLocaleString()} TCG
-                      </td>
-                      <td className="px-3 py-2 text-[10px] text-slate-500">
-                        {new Date(log.createdAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </section>
 
