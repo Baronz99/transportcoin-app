@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
-import { applyProQueueJump } from "@/lib/withdrawalQueue";
+import {
+  applyProQueueJump,
+  PRO_QUEUE_MAX_MINUTES,
+  PRO_QUEUE_MIN_MINUTES,
+} from "@/lib/withdrawalQueue";
+
+const PRO_UPGRADE_TCG_COST = 1000;
 
 export async function POST(req: Request) {
   try {
@@ -19,6 +25,33 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
+    if (user.tier === "PRO") {
+      return NextResponse.json(
+        { error: "User is already PRO." },
+        { status: 409 },
+      );
+    }
+
+    const wallet = await prisma.wallet.findUnique({
+      where: { userId: authUser.userId },
+      select: { id: true, tcGoldBalance: true },
+    });
+
+    if (!wallet) {
+      return NextResponse.json({ error: "Wallet not found." }, { status: 404 });
+    }
+
+    if ((wallet.tcGoldBalance ?? 0) < PRO_UPGRADE_TCG_COST) {
+      return NextResponse.json(
+        {
+          error: "Insufficient TCGold for PRO upgrade.",
+          requiredTcGold: PRO_UPGRADE_TCG_COST,
+          currentTcGold: wallet.tcGoldBalance ?? 0,
+        },
+        { status: 409 },
+      );
+    }
+
     const now = new Date();
     const queued = await prisma.withdrawalRequest.findMany({
       where: { userId: authUser.userId, status: "WAITING_QUEUE" },
@@ -26,10 +59,31 @@ export async function POST(req: Request) {
     });
 
     const result = await prisma.$transaction(async (tx) => {
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: {
+          tcGoldBalance: {
+            decrement: PRO_UPGRADE_TCG_COST,
+          },
+        },
+      });
+
       const updatedUser = await tx.user.update({
         where: { id: authUser.userId },
         data: { tier: "PRO" },
         select: { id: true, tier: true },
+      });
+
+      await tx.transaction.create({
+        data: {
+          userId: authUser.userId,
+          walletId: wallet.id,
+          type: "PRO_UPGRADE",
+          amount: PRO_UPGRADE_TCG_COST,
+          status: "SUCCESS",
+          description: "User upgraded to PRO, 1000 TCGold deducted",
+          adminNote: "Queue jump upgrade applied: tier set to PRO via 1000 TCGold deduction.",
+        },
       });
 
       for (const withdrawal of queued) {
@@ -40,13 +94,14 @@ export async function POST(req: Request) {
             queueDueAt: applyProQueueJump({
               now,
               currentDueAt: withdrawal.queueDueAt,
+              seed: withdrawal.id,
             }),
             expediteAppliedAt: now,
           },
         });
       }
 
-      return updatedUser;
+      return { updatedUser, updatedWallet };
     });
 
     const latestQueued = await prisma.withdrawalRequest.findFirst({
@@ -68,13 +123,30 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
-      tier: result.tier,
+      tier: result.updatedUser.tier,
+      deductedTcGold: PRO_UPGRADE_TCG_COST,
+      wallet: {
+        tcGoldBalance: result.updatedWallet.tcGoldBalance ?? 0,
+      },
       updatedQueueCount: queued.length,
-      withdrawal: latestQueued,
-      message:
-        user.tier === "PRO"
-          ? "PRO lane already active. Waiting queue refreshed."
-          : "Upgraded to PRO. Waiting queue has been expedited.",
+      withdrawal: latestQueued
+        ? {
+            ...latestQueued,
+            estimatedMinMinutes: latestQueued.queueLane === "PRO"
+              ? PRO_QUEUE_MIN_MINUTES
+              : null,
+            estimatedMaxMinutes: latestQueued.queueLane === "PRO"
+              ? PRO_QUEUE_MAX_MINUTES
+              : null,
+            estimatedLabel: latestQueued.queueLane === "PRO"
+              ? "5 to 30 minutes"
+              : null,
+          }
+        : null,
+      estimatedMinMinutes: PRO_QUEUE_MIN_MINUTES,
+      estimatedMaxMinutes: PRO_QUEUE_MAX_MINUTES,
+      estimatedLabel: "5 to 30 minutes",
+      message: "Upgraded to PRO. Waiting queue has been expedited.",
     });
   } catch (err) {
     console.error("WITHDRAWAL-UPGRADE ERROR:", err);

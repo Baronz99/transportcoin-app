@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
+import {
+  PRO_QUEUE_MAX_MINUTES,
+  PRO_QUEUE_MIN_MINUTES,
+} from "@/lib/withdrawalQueue";
 
 export async function GET(req: Request) {
   try {
@@ -31,6 +35,13 @@ export async function GET(req: Request) {
         queueDueAt: queued.queueDueAt,
         queueLane: queued.queueLane,
         expediteAppliedAt: queued.expediteAppliedAt,
+        estimatedMinMinutes: queued.queueLane === "PRO"
+          ? PRO_QUEUE_MIN_MINUTES
+          : null,
+        estimatedMaxMinutes: queued.queueLane === "PRO"
+          ? PRO_QUEUE_MAX_MINUTES
+          : null,
+        estimatedLabel: queued.queueLane === "PRO" ? "5 to 30 minutes" : null,
       },
     });
   } catch (err) {

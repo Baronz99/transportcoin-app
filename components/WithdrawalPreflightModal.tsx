@@ -14,6 +14,9 @@ type Withdrawal = {
   queueDueAt?: string | null;
   queueLane?: string | null;
   expediteAppliedAt?: string | null;
+  estimatedMinMinutes?: number | null;
+  estimatedMaxMinutes?: number | null;
+  estimatedLabel?: string | null;
 };
 
 type WithdrawalAuditStatus = "PASS" | "FAIL";
@@ -55,6 +58,9 @@ type Props = {
   allowRelease: boolean;
   onRunAudit: () => void;
   onRelease: () => void;
+  onUpgradeToPro?: () => void;
+  upgradeLoading?: boolean;
+  upgradeError?: string | null;
   message: string | null;
   error: string | null;
   releaseMessage: string | null;
@@ -75,6 +81,9 @@ export default function WithdrawalPreflightModal({
   allowRelease,
   onRunAudit,
   onRelease,
+  onUpgradeToPro,
+  upgradeLoading,
+  upgradeError,
   message,
   error,
   releaseMessage,
@@ -94,10 +103,11 @@ export default function WithdrawalPreflightModal({
   const spendable = breakdown
     ? Math.max(0, breakdown.availableTcg)
     : audit
-    ? computeSpendable(audit)
-    : null;
+      ? computeSpendable(audit)
+      : null;
 
   const isQueued = withdrawal?.status === "WAITING_QUEUE";
+  const showUpgradeCta = isQueued && withdrawal?.queueLane !== "PRO";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8">
@@ -128,7 +138,7 @@ export default function WithdrawalPreflightModal({
                     Your Withdrawal Goal
                   </p>
                   <p className="mt-1 text-sm font-semibold text-slate-100">
-                    {withdrawal.amountTcn.toLocaleString()} TCN -{" "}
+                    {withdrawal.amountTcn.toLocaleString()} TCN - {" "}
                     {withdrawal.asset}/{withdrawal.network}
                   </p>
                 </div>
@@ -186,8 +196,9 @@ export default function WithdrawalPreflightModal({
               </p>
               <p className="mt-1">
                 Lane: {withdrawal.queueLane || "BASIC"} · ETA{" "}
-                {displayedQueueDays ?? "—"} day
-                {displayedQueueDays === 1 ? "" : "s"}
+                {withdrawal.queueLane === "PRO"
+                  ? withdrawal.estimatedLabel || "5 to 30 minutes"
+                  : `${displayedQueueDays ?? "—"} day${displayedQueueDays === 1 ? "" : "s"}`}
               </p>
               <p className="mt-1 text-emerald-300/90">
                 Queued at{" "}
@@ -195,6 +206,24 @@ export default function WithdrawalPreflightModal({
                   ? new Date(withdrawal.queuedAt).toLocaleString()
                   : "—"}
               </p>
+              {showUpgradeCta && (
+                <div className="mt-2 rounded-xl border border-gold/40 bg-black/30 px-3 py-2 text-[11px] text-gold">
+                  <p className="font-semibold">Jump Queue · Upgrade to PRO</p>
+                  <p className="mt-1 text-[10px] text-slate-300">
+                    Cost: 1000 TCGold · Estimated completion: 5 to 30 minutes.
+                  </p>
+                  <button
+                    onClick={onUpgradeToPro}
+                    disabled={!onUpgradeToPro || upgradeLoading}
+                    className="mt-2 rounded-full border border-gold px-3 py-1.5 text-[10px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
+                  >
+                    {upgradeLoading ? "Upgrading..." : "Upgrade to PRO"}
+                  </button>
+                  {upgradeError && (
+                    <p className="mt-2 text-rose-300">{upgradeError}</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -389,3 +418,4 @@ export default function WithdrawalPreflightModal({
     </div>
   );
 }
+

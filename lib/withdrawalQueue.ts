@@ -1,4 +1,8 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+
+export const PRO_QUEUE_MIN_MINUTES = 5;
+export const PRO_QUEUE_MAX_MINUTES = 30;
 
 export type QueueLane = "BASIC" | "PRO";
 
@@ -15,8 +19,23 @@ export function queueEtaDaysForLane(params: {
   lane: QueueLane;
   seed: number;
 }) {
-  if (params.lane === "PRO") return 1;
+  if (params.lane === "PRO") return basicQueueEtaDays(params.seed);
   return basicQueueEtaDays(params.seed);
+}
+
+export function computeProQueueMinutes(seed: number) {
+  const normalized = Number.isInteger(seed) ? Math.abs(seed) : 0;
+  const span = PRO_QUEUE_MAX_MINUTES - PRO_QUEUE_MIN_MINUTES + 1;
+  return PRO_QUEUE_MIN_MINUTES + (normalized % span);
+}
+
+export function buildProQueueDueAt(params: {
+  now?: Date;
+  seed: number;
+}) {
+  const now = params.now ?? new Date();
+  const minutes = computeProQueueMinutes(params.seed);
+  return new Date(now.getTime() + minutes * MINUTE_MS);
 }
 
 export function buildWaitingQueueSchedule(params: {
@@ -27,10 +46,13 @@ export function buildWaitingQueueSchedule(params: {
   const now = params.now ?? new Date();
   const lane = queueLaneForTier(params.tier);
   const etaDays = queueEtaDaysForLane({ lane, seed: params.seed });
+  const queueDueAt = lane === "PRO"
+    ? buildProQueueDueAt({ now, seed: params.seed })
+    : new Date(now.getTime() + etaDays * DAY_MS);
   return {
     status: "WAITING_QUEUE" as const,
     queuedAt: now,
-    queueDueAt: new Date(now.getTime() + etaDays * DAY_MS),
+    queueDueAt,
     queueLane: lane,
     expediteAppliedAt: null as Date | null,
   };
@@ -43,9 +65,13 @@ export function canReleaseWithdrawalStatus(status: string) {
 export function applyProQueueJump(params: {
   now?: Date;
   currentDueAt: Date | null | undefined;
+  seed: number;
 }) {
   const now = params.now ?? new Date();
-  const proDueAt = new Date(now.getTime() + DAY_MS);
+  const proDueAt = buildProQueueDueAt({
+    now,
+    seed: params.seed,
+  });
   if (!params.currentDueAt) return proDueAt;
   return params.currentDueAt.getTime() < proDueAt.getTime()
     ? params.currentDueAt

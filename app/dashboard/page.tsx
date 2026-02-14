@@ -44,6 +44,9 @@ type PendingWithdrawal = {
   queueDueAt?: string | null;
   queueLane?: string | null;
   expediteAppliedAt?: string | null;
+  estimatedMinMinutes?: number | null;
+  estimatedMaxMinutes?: number | null;
+  estimatedLabel?: string | null;
 };
 
 type WithdrawalAuditStatus = "PASS" | "FAIL";
@@ -538,21 +541,24 @@ export default function DashboardPage() {
 
   const rawQueueDaysRemaining = useMemo(() => {
     if (!queuedWithdrawal?.queueDueAt) return null;
+    if (queuedWithdrawal.queueLane === "PRO") return null;
     const dueAt = new Date(queuedWithdrawal.queueDueAt).getTime();
     return Math.max(0, Math.ceil((dueAt - queueNow) / (24 * 60 * 60 * 1000)));
-  }, [queuedWithdrawal?.queueDueAt, queueNow]);
+  }, [queuedWithdrawal?.queueDueAt, queuedWithdrawal?.queueLane, queueNow]);
 
   useEffect(() => {
-    if (!queuedWithdrawal?.id || rawQueueDaysRemaining !== 14) return;
+    if (!queuedWithdrawal?.id || queuedWithdrawal.queueLane === "PRO") return;
+    if (rawQueueDaysRemaining !== 14) return;
     if (queueJumpAppliedById[queuedWithdrawal.id]) return;
     const next = { ...queueJumpAppliedById, [queuedWithdrawal.id]: true };
     setQueueJumpAppliedById(next);
     persistQueueJumpMap(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queuedWithdrawal?.id, rawQueueDaysRemaining]);
+  }, [queuedWithdrawal?.id, queuedWithdrawal?.queueLane, rawQueueDaysRemaining]);
 
   const displayedQueueDays = useMemo(() => {
     if (!queuedWithdrawal?.queueDueAt) return null;
+    if (queuedWithdrawal.queueLane === "PRO") return null;
     return computeDisplayedQueueDays({
       queueDueAt: queuedWithdrawal.queueDueAt,
       now: new Date(queueNow),
@@ -754,8 +760,9 @@ export default function DashboardPage() {
                   <p>
                     ETA:{" "}
                     <span className="font-semibold text-slate-100">
-                      {displayedQueueDays ?? "—"} day
-                      {displayedQueueDays === 1 ? "" : "s"}
+                      {queuedWithdrawal.queueLane === "PRO"
+                        ? queuedWithdrawal.estimatedLabel || "5 to 30 minutes"
+                        : `${displayedQueueDays ?? "—"} day${displayedQueueDays === 1 ? "" : "s"}`}
                     </span>
                   </p>
                   <p>
@@ -767,15 +774,20 @@ export default function DashboardPage() {
                     </span>
                   </p>
                   {userMeta?.tier !== "PRO" && (
-                    <button
-                      onClick={upgradeToProLane}
-                      disabled={upgradeLoading}
-                      className="mt-2 rounded-full border border-gold px-3 py-1.5 text-[10px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
-                    >
-                      {upgradeLoading
-                        ? "Upgrading..."
-                        : "Jump Queue · Upgrade to PRO"}
-                    </button>
+                    <div className="mt-2 rounded-xl border border-gold/30 bg-black/30 px-3 py-2">
+                      <p className="text-[10px] text-slate-300">
+                        Cost: 1000 TCGold · PRO ETA: 5 to 30 minutes
+                      </p>
+                      <button
+                        onClick={upgradeToProLane}
+                        disabled={upgradeLoading}
+                        className="mt-2 rounded-full border border-gold px-3 py-1.5 text-[10px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
+                      >
+                        {upgradeLoading
+                          ? "Upgrading..."
+                          : "Jump Queue · Upgrade to PRO"}
+                      </button>
+                    </div>
                   )}
                   {upgradeError && (
                     <p className="text-rose-300">{upgradeError}</p>
@@ -963,6 +975,9 @@ export default function DashboardPage() {
         allowRelease={allowRelease}
         onRunAudit={runWithdrawalAudit}
         onRelease={releaseWithdrawal}
+        onUpgradeToPro={upgradeToProLane}
+        upgradeLoading={upgradeLoading}
+        upgradeError={upgradeError}
         message={auditMessage}
         error={auditError}
         releaseMessage={releaseMessage}
