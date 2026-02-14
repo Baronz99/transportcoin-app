@@ -10,6 +10,10 @@ type Withdrawal = {
   network: string;
   status: string;
   createdAt: string;
+  queuedAt?: string | null;
+  queueDueAt?: string | null;
+  queueLane?: string | null;
+  expediteAppliedAt?: string | null;
 };
 
 type WithdrawalAuditStatus = "PASS" | "FAIL";
@@ -47,12 +51,15 @@ type Props = {
   logs: WithdrawalAudit[];
   auditLoading: boolean;
   releaseLoading: boolean;
+  gateState: "idle" | "running_audit" | "failed" | "passed";
+  allowRelease: boolean;
   onRunAudit: () => void;
   onRelease: () => void;
   message: string | null;
   error: string | null;
   releaseMessage: string | null;
   releaseError: string | null;
+  displayedQueueDays?: number | null;
 };
 
 export default function WithdrawalPreflightModal({
@@ -64,12 +71,15 @@ export default function WithdrawalPreflightModal({
   logs,
   auditLoading,
   releaseLoading,
+  gateState,
+  allowRelease,
   onRunAudit,
   onRelease,
   message,
   error,
   releaseMessage,
   releaseError,
+  displayedQueueDays,
 }: Props) {
   if (!isOpen) return null;
 
@@ -86,6 +96,8 @@ export default function WithdrawalPreflightModal({
     : audit
     ? computeSpendable(audit)
     : null;
+
+  const isQueued = withdrawal?.status === "WAITING_QUEUE";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8">
@@ -145,7 +157,7 @@ export default function WithdrawalPreflightModal({
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={onRunAudit}
-              disabled={!withdrawal || auditLoading}
+              disabled={!withdrawal || isQueued || auditLoading}
               className="rounded-full border border-gold px-4 py-2 text-[11px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
             >
               {auditLoading ? "Running..." : "Run Withdrawal Audit"}
@@ -154,24 +166,54 @@ export default function WithdrawalPreflightModal({
               onClick={onRelease}
               disabled={
                 !withdrawal ||
+                isQueued ||
                 releaseLoading ||
-                !audit ||
-                audit.result !== "PASS"
+                !allowRelease
               }
               className="rounded-full bg-gold px-4 py-2 text-[11px] font-semibold text-black hover:bg-gold/90 disabled:opacity-50"
             >
               {releaseLoading ? "Releasing..." : "Release Withdrawal"}
             </button>
             <p className="text-[11px] text-slate-500">
-              Release triggers payout immediately (once requirements pass).
+              Release sends successful requests into waiting queue.
             </p>
           </div>
 
-          {!audit && withdrawal && (
+          {isQueued && (
+            <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 px-4 py-3 text-[11px] text-emerald-200">
+              <p className="text-xs font-semibold text-emerald-100">
+                Success: queued for payout lane
+              </p>
+              <p className="mt-1">
+                Lane: {withdrawal.queueLane || "BASIC"} · ETA{" "}
+                {displayedQueueDays ?? "—"} day
+                {displayedQueueDays === 1 ? "" : "s"}
+              </p>
+              <p className="mt-1 text-emerald-300/90">
+                Queued at{" "}
+                {withdrawal.queuedAt
+                  ? new Date(withdrawal.queuedAt).toLocaleString()
+                  : "—"}
+              </p>
+            </div>
+          )}
+
+          {!audit && withdrawal && !isQueued && (
             <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
               Run audit to check requirements and unlock Release.
             </div>
           )}
+
+          <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
+            Gate status:{" "}
+            <span className="font-semibold">
+              {isQueued && "Queued (release completed)"}
+              {!isQueued && gateState === "idle" && "Idle (run audit)"}
+              {gateState === "running_audit" && "Running audit..."}
+              {gateState === "failed" && "Failed (latest audit is not PASS)"}
+              {gateState === "passed" && "Passed (release unlocked)"}
+            </span>
+          </div>
 
           {error && (
             <div className="rounded-xl border border-rose-800 bg-rose-950/50 px-3 py-2 text-[11px] text-rose-200">
@@ -197,7 +239,7 @@ export default function WithdrawalPreflightModal({
             </div>
           )}
 
-          {audit && breakdown && (
+          {audit && breakdown && !isQueued && (
             <>
               <div className="rounded-2xl border border-slate-800 bg-black/50 px-4 py-3">
                 <div className="flex items-center justify-between">

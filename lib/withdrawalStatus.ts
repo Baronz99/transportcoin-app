@@ -2,6 +2,8 @@ export function withdrawalStatusLabel(status: string) {
   switch (status) {
     case "PENDING":
       return "Pending";
+    case "WAITING_QUEUE":
+      return "Waiting queue";
     case "READY_FOR_PAYOUT":
       return "Ready for payout";
     case "COMPLETED":
@@ -17,6 +19,8 @@ export function withdrawalStatusChipClasses(status: string) {
   switch (status) {
     case "PENDING":
       return "bg-amber-900/60 text-amber-300";
+    case "WAITING_QUEUE":
+      return "bg-indigo-900/60 text-indigo-200";
     case "READY_FOR_PAYOUT":
       return "bg-blue-900/60 text-blue-200";
     case "COMPLETED":
@@ -32,12 +36,14 @@ export function withdrawalStatusRank(status: string) {
   switch (status) {
     case "PENDING":
       return 1;
-    case "READY_FOR_PAYOUT":
+    case "WAITING_QUEUE":
       return 2;
-    case "COMPLETED":
+    case "READY_FOR_PAYOUT":
       return 3;
-    case "REJECTED":
+    case "COMPLETED":
       return 4;
+    case "REJECTED":
+      return 5;
     default:
       return 5;
   }

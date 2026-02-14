@@ -2,37 +2,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
-
-function requiredTcgForWithdrawal(amountTcn: number) {
-  return Math.max(1, Math.ceil(amountTcn / 100));
-}
-
-function buildBreakdown(params: {
-  tierSnapshot: string;
-  currentTcg: number;
-  amountTcn: number;
-}) {
-  const tierSnapshot = params.tierSnapshot || "BASIC";
-  const reserveFloorTcg = tierSnapshot === "BASIC" ? 800 : 0;
-  const currentTcg = params.currentTcg;
-  const availableTcg = Math.max(0, currentTcg - reserveFloorTcg);
-  const requiredTcg = requiredTcgForWithdrawal(params.amountTcn);
-  const deficitTcg = Math.max(0, requiredTcg - availableTcg);
-  const rulesText =
-    reserveFloorTcg > 0
-      ? "BASIC accounts keep an 800 TCG reserve; 1% hold uses available TCG only."
-      : "1% hold uses available TCG only.";
-
-  return {
-    tierSnapshot,
-    reserveFloorTcg,
-    currentTcg,
-    availableTcg,
-    requiredTcg,
-    deficitTcg,
-    rulesText,
-  };
-}
+import {
+  buildAuditBreakdown,
+  evaluateReleaseGate,
+} from "@/lib/withdrawalAudit";
+import {
+  buildWaitingQueueSchedule,
+  canReleaseWithdrawalStatus,
+} from "@/lib/withdrawalQueue";
 
 export async function POST(req: Request) {
   try {
@@ -65,7 +42,7 @@ export async function POST(req: Request) {
 
     const withdrawalRequest = withdrawalId
       ? await prisma.withdrawalRequest.findFirst({
-          where: { id: withdrawalId, userId: authUser.userId, status: "PENDING" },
+          where: { id: withdrawalId, userId: authUser.userId },
         })
       : await prisma.withdrawalRequest.findFirst({
           where: { userId: authUser.userId, status: "PENDING" },
@@ -79,6 +56,28 @@ export async function POST(req: Request) {
       );
     }
 
+    if (withdrawalRequest.status === "WAITING_QUEUE") {
+      return NextResponse.json(
+        {
+          ok: false,
+          withdrawal: withdrawalRequest,
+          message: "Withdrawal is already queued.",
+        },
+        { status: 409 },
+      );
+    }
+
+    if (!canReleaseWithdrawalStatus(withdrawalRequest.status)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          withdrawal: withdrawalRequest,
+          message: `Withdrawal is ${withdrawalRequest.status} and cannot be released.`,
+        },
+        { status: 409 },
+      );
+    }
+
     const amountTcn = withdrawalRequest.amountTcn;
     if (!Number.isInteger(amountTcn) || amountTcn <= 0) {
       return NextResponse.json(
@@ -87,33 +86,77 @@ export async function POST(req: Request) {
       );
     }
 
-    const breakdown = buildBreakdown({
+    const latestAudit = await prisma.withdrawalAuditLog.findFirst({
+      where: {
+        userId: authUser.userId,
+        withdrawalRequestId: withdrawalRequest.id,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const breakdown = buildAuditBreakdown({
       tierSnapshot: user.tier || "BASIC",
       currentTcg: wallet.tcGoldBalance ?? 0,
       amountTcn,
     });
 
-    if (breakdown.deficitTcg > 0) {
+    const gate = evaluateReleaseGate({
+      latestAuditResult: latestAudit?.result,
+      deficitTcg: breakdown.deficitTcg,
+    });
+    if (!gate.allowRelease) {
       return NextResponse.json(
         {
           ok: false,
           withdrawal: withdrawalRequest,
+          latestAuditResult: latestAudit?.result ?? null,
+          required: breakdown.requiredTcg,
+          spendable: breakdown.availableTcg,
+          deficit: breakdown.deficitTcg,
           breakdown,
-          message: "Withdrawal cannot be released until the deficit is cleared.",
+          message: gate.reason === "LATEST_AUDIT_NOT_PASS"
+            ? "Withdrawal is blocked. Run Withdrawal Audit and ensure the latest audit result is PASS."
+            : "Withdrawal cannot be released until the deficit is cleared.",
         },
         { status: 409 },
       );
     }
 
-    const updatedWithdrawal = await prisma.withdrawalRequest.update({
+    const queueSchedule = buildWaitingQueueSchedule({
+      tier: user.tier || "BASIC",
+      seed: withdrawalRequest.id,
+    });
+
+    const transition = await prisma.withdrawalRequest.updateMany({
+      where: {
+        id: withdrawalRequest.id,
+        status: "PENDING",
+      },
+      data: queueSchedule,
+    });
+
+    if (transition.count === 0) {
+      const current = await prisma.withdrawalRequest.findUnique({
+        where: { id: withdrawalRequest.id },
+      });
+      return NextResponse.json(
+        {
+          ok: false,
+          withdrawal: current,
+          message: "Withdrawal was already processed.",
+        },
+        { status: 409 },
+      );
+    }
+
+    const updatedWithdrawal = await prisma.withdrawalRequest.findUnique({
       where: { id: withdrawalRequest.id },
-      data: { status: "READY_FOR_PAYOUT" },
     });
 
     return NextResponse.json({
       ok: true,
       withdrawal: updatedWithdrawal,
-      message: "Withdrawal released for payout.",
+      message: "Withdrawal released and added to waiting queue.",
     });
   } catch (err) {
     console.error("WITHDRAWAL-RELEASE ERROR:", err);

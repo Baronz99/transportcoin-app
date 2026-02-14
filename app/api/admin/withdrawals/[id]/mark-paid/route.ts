@@ -38,7 +38,7 @@ export async function POST(
       return NextResponse.json({ success: true, withdrawal: wr });
     }
 
-    if (wr.status !== "READY_FOR_PAYOUT") {
+    if (wr.status !== "READY_FOR_PAYOUT" && wr.status !== "WAITING_QUEUE") {
       return NextResponse.json(
         { error: `Withdrawal is ${wr.status} and cannot be marked paid.` },
         { status: 409 },

@@ -42,7 +42,11 @@ export async function POST(
       return NextResponse.json({ success: true, withdrawal: wr });
     }
 
-    if (wr.status !== "PENDING" && wr.status !== "READY_FOR_PAYOUT") {
+    if (
+      wr.status !== "PENDING" &&
+      wr.status !== "READY_FOR_PAYOUT" &&
+      wr.status !== "WAITING_QUEUE"
+    ) {
       return NextResponse.json(
         { error: `Withdrawal is ${wr.status} and cannot be rejected.` },
         { status: 409 },

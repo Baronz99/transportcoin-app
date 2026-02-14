@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { TCN_PRICE_USD_CENTS, TCGOLD_PRICE_USD_CENTS } from "@/lib/prices";
 import WithdrawalPreflightModal from "@/components/WithdrawalPreflightModal";
+import { computeDisplayedQueueDays } from "@/lib/withdrawalQueue";
 
 type Wallet = {
   balance: number;
@@ -39,6 +40,10 @@ type PendingWithdrawal = {
   network: string;
   status: string;
   createdAt: string;
+  queuedAt?: string | null;
+  queueDueAt?: string | null;
+  queueLane?: string | null;
+  expediteAppliedAt?: string | null;
 };
 
 type WithdrawalAuditStatus = "PASS" | "FAIL";
@@ -66,6 +71,8 @@ type AuditBreakdown = {
   deficitTcg: number;
   rulesText: string;
 };
+
+type PreflightGateState = "idle" | "running_audit" | "failed" | "passed";
 
 const fmtUsdFromCents = (cents: number) =>
   new Intl.NumberFormat("en-US", {
@@ -120,6 +127,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [pendingWithdrawal, setPendingWithdrawal] =
     useState<PendingWithdrawal | null>(null);
+  const [queuedWithdrawal, setQueuedWithdrawal] =
+    useState<PendingWithdrawal | null>(null);
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [audit, setAudit] = useState<WithdrawalAudit | null>(null);
   const [breakdown, setBreakdown] = useState<AuditBreakdown | null>(null);
@@ -131,6 +140,14 @@ export default function DashboardPage() {
   const [releaseError, setReleaseError] = useState<string | null>(null);
   const [releaseMessage, setReleaseMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [upgradeLoading, setUpgradeLoading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
+  const [queueNow, setQueueNow] = useState(Date.now());
+  const [queueJumpAppliedById, setQueueJumpAppliedById] = useState<
+    Record<number, boolean>
+  >({});
+  const [gateState, setGateState] = useState<PreflightGateState>("idle");
 
   const token =
     typeof window !== "undefined"
@@ -158,12 +175,43 @@ export default function DashboardPage() {
     localStorage.setItem(dismissalKey, String(withdrawalId));
   };
 
+  const queueJumpKey = userMeta?.id
+    ? `withdrawalQueueDisplayJump:${userMeta.id}`
+    : null;
+
+  const persistQueueJumpMap = (value: Record<number, boolean>) => {
+    if (!queueJumpKey || typeof window === "undefined") return;
+    localStorage.setItem(queueJumpKey, JSON.stringify(value));
+  };
+
   // Redirect if not logged in
   useEffect(() => {
     if (typeof window === "undefined") return;
     const t = localStorage.getItem("transportcoin_token");
     if (!t) router.push("/login");
   }, [router]);
+
+  useEffect(() => {
+    if (!queueJumpKey || typeof window === "undefined") return;
+    const raw = localStorage.getItem(queueJumpKey);
+    if (!raw) {
+      setQueueJumpAppliedById({});
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw) as Record<string, boolean>;
+      const normalized: Record<number, boolean> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        const id = Number(key);
+        if (Number.isInteger(id) && id > 0 && value) {
+          normalized[id] = true;
+        }
+      }
+      setQueueJumpAppliedById(normalized);
+    } catch {
+      setQueueJumpAppliedById({});
+    }
+  }, [queueJumpKey]);
 
   // Load dashboard data
   useEffect(() => {
@@ -250,7 +298,6 @@ export default function DashboardPage() {
       const nextWithdrawal = data.withdrawal ?? null;
       setPendingWithdrawal(nextWithdrawal);
       if (!nextWithdrawal) {
-        setPreflightOpen(false);
         setDismissedId(null);
         return;
       }
@@ -260,6 +307,23 @@ export default function DashboardPage() {
       } else {
         setPreflightOpen(false);
       }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadQueuedWithdrawal = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch("/api/wallet/withdrawals/queue-latest", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return;
+      }
+      setQueuedWithdrawal(data.withdrawal ?? null);
     } catch (err) {
       console.error(err);
     }
@@ -286,6 +350,7 @@ export default function DashboardPage() {
 
   const runWithdrawalAudit = async () => {
     if (!token) return;
+    setGateState("running_audit");
     setAuditLoading(true);
     setAuditError(null);
     setAuditMessage(null);
@@ -301,12 +366,19 @@ export default function DashboardPage() {
       if (!res.ok) {
         setAudit(null);
         setBreakdown(null);
-        setAuditError(data.error || "Withdrawal audit failed.");
+        setAuditError(data.error || data.message || "Withdrawal audit failed.");
+        if (res.status === 404) {
+          setPendingWithdrawal(null);
+          setGateState("idle");
+        } else {
+          setGateState("failed");
+        }
         return;
       }
       setAudit(data.audit || null);
       setBreakdown(data.breakdown || null);
       setAuditMessage(data.message || null);
+      setGateState(data.audit?.result === "PASS" ? "passed" : "failed");
       if (data.withdrawal) {
         setPendingWithdrawal(data.withdrawal);
       }
@@ -321,6 +393,12 @@ export default function DashboardPage() {
 
   const releaseWithdrawal = async () => {
     if (!token || !pendingWithdrawal) return;
+    if (gateState !== "passed") {
+      setReleaseError(
+        "Run Withdrawal Audit and ensure the latest result is PASS before releasing.",
+      );
+      return;
+    }
     setReleaseLoading(true);
     setReleaseError(null);
     setReleaseMessage(null);
@@ -339,20 +417,27 @@ export default function DashboardPage() {
         if (res.status === 409) {
           setBreakdown(data.breakdown || null);
           setReleaseError(data.message || "Release check failed.");
+          if (data.withdrawal?.status === "WAITING_QUEUE") {
+            setQueuedWithdrawal(data.withdrawal);
+            setPreflightOpen(true);
+          } else {
+            setGateState("failed");
+          }
+          await loadAuditLogs();
           return;
         }
         setReleaseError(data.error || "Failed to release withdrawal.");
         return;
       }
 
-      setReleaseMessage(data.message || "Withdrawal released.");
-      setToastMessage("Withdrawal released. Payout is being sent now.");
+      setReleaseMessage(data.message || "Withdrawal queued.");
+      setToastMessage("Withdrawal queued successfully.");
       setTimeout(() => setToastMessage(null), 4000);
-      setAudit(null);
-      setBreakdown(null);
-      setPendingWithdrawal(null);
-      setPreflightOpen(false);
-      setDismissedId(null);
+      setQueuedWithdrawal(data.withdrawal || null);
+      setPendingWithdrawal(data.withdrawal || null);
+      setGateState("passed");
+      setPreflightOpen(true);
+      await loadQueuedWithdrawal();
       await loadAuditLogs();
     } catch (err) {
       console.error(err);
@@ -362,8 +447,38 @@ export default function DashboardPage() {
     }
   };
 
+  const upgradeToProLane = async () => {
+    if (!token) return;
+    setUpgradeLoading(true);
+    setUpgradeError(null);
+    setUpgradeMessage(null);
+    try {
+      const res = await fetch("/api/wallet/withdrawals/upgrade", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setUpgradeError(data.error || "Failed to upgrade queue lane.");
+        return;
+      }
+      setUpgradeMessage(data.message || "Upgraded to PRO.");
+      setQueuedWithdrawal(data.withdrawal || null);
+      setUserMeta((prev) => (prev ? { ...prev, tier: data.tier || "PRO" } : prev));
+      await loadQueuedWithdrawal();
+    } catch (err) {
+      console.error(err);
+      setUpgradeError("Network error upgrading queue lane.");
+    } finally {
+      setUpgradeLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadPendingWithdrawal();
+    loadQueuedWithdrawal();
     loadAuditLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, userMeta?.id]);
@@ -372,13 +487,78 @@ export default function DashboardPage() {
     if (!token) return;
     const interval = setInterval(() => {
       loadPendingWithdrawal();
+      loadQueuedWithdrawal();
     }, 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, userMeta?.id]);
 
+  useEffect(() => {
+    if (!pendingWithdrawal && !queuedWithdrawal) {
+      setPreflightOpen(false);
+    }
+  }, [pendingWithdrawal, queuedWithdrawal]);
+
   const tcnBalance = wallet?.balance ?? 0;
   const tcgBalance = wallet?.tcGoldBalance ?? 0;
+
+  const latestAuditForPending = useMemo(() => {
+    if (!pendingWithdrawal) return null;
+    return (
+      auditLogs.find(
+        (log) => log.withdrawalRequestId === pendingWithdrawal.id,
+      ) || null
+    );
+  }, [auditLogs, pendingWithdrawal]);
+
+  useEffect(() => {
+    if (!pendingWithdrawal) {
+      setGateState("idle");
+      return;
+    }
+    if (auditLoading) {
+      setGateState("running_audit");
+      return;
+    }
+    if (!latestAuditForPending) {
+      setGateState("idle");
+      return;
+    }
+    setGateState(latestAuditForPending.result === "PASS" ? "passed" : "failed");
+  }, [auditLoading, latestAuditForPending, pendingWithdrawal]);
+
+  const allowRelease = gateState === "passed";
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setQueueNow(Date.now());
+    }, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const rawQueueDaysRemaining = useMemo(() => {
+    if (!queuedWithdrawal?.queueDueAt) return null;
+    const dueAt = new Date(queuedWithdrawal.queueDueAt).getTime();
+    return Math.max(0, Math.ceil((dueAt - queueNow) / (24 * 60 * 60 * 1000)));
+  }, [queuedWithdrawal?.queueDueAt, queueNow]);
+
+  useEffect(() => {
+    if (!queuedWithdrawal?.id || rawQueueDaysRemaining !== 14) return;
+    if (queueJumpAppliedById[queuedWithdrawal.id]) return;
+    const next = { ...queueJumpAppliedById, [queuedWithdrawal.id]: true };
+    setQueueJumpAppliedById(next);
+    persistQueueJumpMap(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedWithdrawal?.id, rawQueueDaysRemaining]);
+
+  const displayedQueueDays = useMemo(() => {
+    if (!queuedWithdrawal?.queueDueAt) return null;
+    return computeDisplayedQueueDays({
+      queueDueAt: queuedWithdrawal.queueDueAt,
+      now: new Date(queueNow),
+      jumpApplied: Boolean(queueJumpAppliedById[queuedWithdrawal.id]),
+    });
+  }, [queuedWithdrawal, queueJumpAppliedById, queueNow]);
 
   // ✅ Unified pricing (cents)
   const tcnValueUsdCents = tcnBalance * TCN_PRICE_USD_CENTS;
@@ -447,7 +627,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {pendingWithdrawal && !preflightOpen && (
+      {pendingWithdrawal?.status === "PENDING" && !preflightOpen && (
         <div className="mb-5 rounded-2xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-xs text-amber-100">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -554,6 +734,62 @@ export default function DashboardPage() {
               withdrawals across Transportcoin. Use it as a guide when planning
               large transfers.
             </p>
+
+            <div className="mt-3 rounded-xl border border-slate-800 bg-black/40 p-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                Your waiting queue
+              </p>
+              {queuedWithdrawal ? (
+                <div className="mt-2 space-y-1 text-[11px] text-slate-300">
+                  <p>
+                    Withdrawal #{queuedWithdrawal.id} ·{" "}
+                    {queuedWithdrawal.amountTcn.toLocaleString()} TCN
+                  </p>
+                  <p>
+                    Lane:{" "}
+                    <span className="font-semibold text-slate-100">
+                      {queuedWithdrawal.queueLane || "BASIC"}
+                    </span>
+                  </p>
+                  <p>
+                    ETA:{" "}
+                    <span className="font-semibold text-slate-100">
+                      {displayedQueueDays ?? "—"} day
+                      {displayedQueueDays === 1 ? "" : "s"}
+                    </span>
+                  </p>
+                  <p>
+                    Real due:{" "}
+                    <span className="font-semibold text-slate-100">
+                      {queuedWithdrawal.queueDueAt
+                        ? new Date(queuedWithdrawal.queueDueAt).toLocaleString()
+                        : "—"}
+                    </span>
+                  </p>
+                  {userMeta?.tier !== "PRO" && (
+                    <button
+                      onClick={upgradeToProLane}
+                      disabled={upgradeLoading}
+                      className="mt-2 rounded-full border border-gold px-3 py-1.5 text-[10px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
+                    >
+                      {upgradeLoading
+                        ? "Upgrading..."
+                        : "Jump Queue · Upgrade to PRO"}
+                    </button>
+                  )}
+                  {upgradeError && (
+                    <p className="text-rose-300">{upgradeError}</p>
+                  )}
+                  {upgradeMessage && !upgradeError && (
+                    <p className="text-emerald-300">{upgradeMessage}</p>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  No queued withdrawals yet.
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-950/80 p-4 text-xs text-slate-300">
@@ -713,22 +949,25 @@ export default function DashboardPage() {
         isOpen={preflightOpen}
         onClose={() => {
           setPreflightOpen(false);
-          if (pendingWithdrawal) {
+          if (pendingWithdrawal?.status === "PENDING") {
             setDismissedId(pendingWithdrawal.id);
           }
         }}
-        withdrawal={pendingWithdrawal}
+        withdrawal={pendingWithdrawal || queuedWithdrawal}
         audit={audit}
         breakdown={breakdown}
         logs={auditLogs}
         auditLoading={auditLoading}
         releaseLoading={releaseLoading}
+        gateState={gateState}
+        allowRelease={allowRelease}
         onRunAudit={runWithdrawalAudit}
         onRelease={releaseWithdrawal}
         message={auditMessage}
         error={auditError}
         releaseMessage={releaseMessage}
         releaseError={releaseError}
+        displayedQueueDays={displayedQueueDays}
       />
 
       {toastMessage && (

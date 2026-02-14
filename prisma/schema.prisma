@@ -91,6 +91,10 @@ model WithdrawalRequest {
   amountTcn Int
 
   status    String   @default("PENDING")
+  queuedAt  DateTime?
+  queueDueAt DateTime?
+  queueLane String?
+  expediteAppliedAt DateTime?
   createdAt DateTime @default(now())
 
   // ✅ Optional 1:1 thread linked by SupportThread.withdrawalRequestId

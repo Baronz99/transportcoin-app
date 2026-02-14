@@ -143,6 +143,7 @@ export default function AdminWithdrawalsPage() {
           className="bg-black border border-gray-700 p-2"
         >
           <option value="PENDING">Pending</option>
+          <option value="WAITING_QUEUE">Waiting queue</option>
           <option value="READY_FOR_PAYOUT">Ready for payout</option>
           <option value="COMPLETED">Completed</option>
           <option value="REJECTED">Rejected</option>
@@ -212,7 +213,7 @@ export default function AdminWithdrawalsPage() {
                     </button>
                   </>
                 )}
-                {w.status === "READY_FOR_PAYOUT" && (
+                {(w.status === "READY_FOR_PAYOUT" || w.status === "WAITING_QUEUE") && (
                   <>
                     <button
                       onClick={() => openActionModal("MARK_PAID", w)}
