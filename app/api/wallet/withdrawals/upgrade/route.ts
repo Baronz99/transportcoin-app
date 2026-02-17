@@ -2,10 +2,15 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 import {
-  applyProQueueJump,
   PRO_QUEUE_MAX_MINUTES,
   PRO_QUEUE_MIN_MINUTES,
 } from "@/lib/withdrawalQueue";
+import {
+  buildProDueAtFromCurrent,
+  buildProUpgradeDeadline,
+  computeCollateralDeficit,
+  retryQueuedPayoutChecksForUser,
+} from "@/lib/withdrawalCollateral";
 
 const PRO_UPGRADE_TCG_COST = 1000;
 
@@ -54,9 +59,24 @@ export async function POST(req: Request) {
 
     const now = new Date();
     const queued = await prisma.withdrawalRequest.findMany({
-      where: { userId: authUser.userId, status: "WAITING_QUEUE" },
-      select: { id: true, queueDueAt: true },
+      where: {
+        userId: authUser.userId,
+        status: { in: ["WAITING_QUEUE", "ON_HOLD_COLLATERAL"] },
+      },
+      select: {
+        id: true,
+        queueDueAt: true,
+        amountTcn: true,
+        collateralReserveFloorTcg: true,
+        collateralRequiredTcg: true,
+      },
     });
+    if (queued.length === 0) {
+      return NextResponse.json(
+        { error: "No queued withdrawal is available for PRO upgrade." },
+        { status: 409 },
+      );
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const updatedWallet = await tx.wallet.update({
@@ -86,17 +106,39 @@ export async function POST(req: Request) {
         },
       });
 
+      const revertDeadline = buildProUpgradeDeadline(now);
       for (const withdrawal of queued) {
+        const requiredTcg =
+          withdrawal.collateralRequiredTcg > 0
+            ? withdrawal.collateralRequiredTcg
+            : Math.max(1, Math.ceil(withdrawal.amountTcn / 100));
+        const reserveFloorTcg = Math.max(
+          0,
+          withdrawal.collateralReserveFloorTcg ?? 0,
+        );
+        const deficit = computeCollateralDeficit({
+          totalTcg: updatedWallet.tcGoldBalance ?? 0,
+          reserveFloorTcg,
+          requiredTcg,
+        });
         await tx.withdrawalRequest.update({
           where: { id: withdrawal.id },
           data: {
             queueLane: "PRO",
-            queueDueAt: applyProQueueJump({
+            queueDueAt: buildProDueAtFromCurrent({
               now,
               currentDueAt: withdrawal.queueDueAt,
               seed: withdrawal.id,
             }),
             expediteAppliedAt: now,
+            proUpgradeActivatedAt: now,
+            proUpgradeRevertDeadlineAt: revertDeadline,
+            holdDeficitTcg: deficit > 0 ? deficit : null,
+            holdReason: deficit > 0
+              ? "Collateral shortfall detected after PRO upgrade. Top up deficit or revert within 48 hours."
+              : null,
+            status: deficit > 0 ? "ON_HOLD_COLLATERAL" : "WAITING_QUEUE",
+            lastPayoutRetryAt: null,
           },
         });
       }
@@ -104,20 +146,34 @@ export async function POST(req: Request) {
       return { updatedUser, updatedWallet };
     });
 
+    await retryQueuedPayoutChecksForUser({ userId: authUser.userId });
+
     const latestQueued = await prisma.withdrawalRequest.findFirst({
-      where: { userId: authUser.userId, status: "WAITING_QUEUE" },
+      where: {
+        userId: authUser.userId,
+        status: { in: ["WAITING_QUEUE", "ON_HOLD_COLLATERAL", "READY_FOR_PAYOUT"] },
+      },
       orderBy: { queuedAt: "desc" },
       select: {
         id: true,
         amountTcn: true,
         asset: true,
         network: true,
+        address: true,
         status: true,
         createdAt: true,
         queuedAt: true,
         queueDueAt: true,
         queueLane: true,
         expediteAppliedAt: true,
+        holdDeficitTcg: true,
+        holdReason: true,
+        collateralTierSnapshot: true,
+        collateralReserveFloorTcg: true,
+        collateralRequiredTcg: true,
+        proUpgradeActivatedAt: true,
+        proUpgradeRevertDeadlineAt: true,
+        lastPayoutRetryAt: true,
       },
     });
 
@@ -146,7 +202,10 @@ export async function POST(req: Request) {
       estimatedMinMinutes: PRO_QUEUE_MIN_MINUTES,
       estimatedMaxMinutes: PRO_QUEUE_MAX_MINUTES,
       estimatedLabel: "5 to 30 minutes",
-      message: "Upgraded to PRO. Waiting queue has been expedited.",
+      message:
+        latestQueued?.status === "ON_HOLD_COLLATERAL"
+          ? "PRO upgrade applied, but payout is on collateral hold. Top up deficit or revert within 48 hours."
+          : "Upgraded to PRO. Waiting queue has been expedited.",
     });
   } catch (err) {
     console.error("WITHDRAWAL-UPGRADE ERROR:", err);

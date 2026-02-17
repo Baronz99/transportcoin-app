@@ -5,11 +5,16 @@ import { getUserFromAuthHeader } from "@/lib/auth";
 import {
   buildAuditBreakdown,
   evaluateReleaseGate,
+  requiredTcgForWithdrawal,
 } from "@/lib/withdrawalAudit";
 import {
   buildWaitingQueueSchedule,
   canReleaseWithdrawalStatus,
 } from "@/lib/withdrawalQueue";
+import {
+  buildCollateralSnapshot,
+  retryQueuedPayoutChecksForUser,
+} from "@/lib/withdrawalCollateral";
 
 export async function POST(req: Request) {
   try {
@@ -126,13 +131,35 @@ export async function POST(req: Request) {
       tier: user.tier || "BASIC",
       seed: withdrawalRequest.id,
     });
+    const collateralSnapshot = buildCollateralSnapshot({
+      tier: withdrawalRequest.collateralTierSnapshot || user.tier || "BASIC",
+      amountTcn,
+    });
 
     const transition = await prisma.withdrawalRequest.updateMany({
       where: {
         id: withdrawalRequest.id,
         status: "PENDING",
       },
-      data: queueSchedule,
+      data: {
+        ...queueSchedule,
+        collateralTierSnapshot:
+          withdrawalRequest.collateralTierSnapshot ||
+          collateralSnapshot.collateralTierSnapshot,
+        collateralReserveFloorTcg:
+          withdrawalRequest.collateralReserveFloorTcg > 0
+            ? withdrawalRequest.collateralReserveFloorTcg
+            : collateralSnapshot.collateralReserveFloorTcg,
+        collateralRequiredTcg:
+          withdrawalRequest.collateralRequiredTcg > 0
+            ? withdrawalRequest.collateralRequiredTcg
+            : requiredTcgForWithdrawal(amountTcn),
+        holdDeficitTcg: null,
+        holdReason: null,
+        proUpgradeActivatedAt: null,
+        proUpgradeRevertDeadlineAt: null,
+        lastPayoutRetryAt: null,
+      },
     });
 
     if (transition.count === 0) {
@@ -152,6 +179,7 @@ export async function POST(req: Request) {
     const updatedWithdrawal = await prisma.withdrawalRequest.findUnique({
       where: { id: withdrawalRequest.id },
     });
+    await retryQueuedPayoutChecksForUser({ userId: authUser.userId });
 
     return NextResponse.json({
       ok: true,

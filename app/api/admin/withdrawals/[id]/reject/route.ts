@@ -44,6 +44,7 @@ export async function POST(
 
     if (
       wr.status !== "PENDING" &&
+      wr.status !== "ON_HOLD_COLLATERAL" &&
       wr.status !== "READY_FOR_PAYOUT" &&
       wr.status !== "WAITING_QUEUE"
     ) {

@@ -95,6 +95,14 @@ model WithdrawalRequest {
   queueDueAt DateTime?
   queueLane String?
   expediteAppliedAt DateTime?
+  collateralTierSnapshot String @default("BASIC")
+  collateralReserveFloorTcg Int @default(0)
+  collateralRequiredTcg Int @default(0)
+  holdDeficitTcg Int?
+  holdReason String?
+  proUpgradeActivatedAt DateTime?
+  proUpgradeRevertDeadlineAt DateTime?
+  lastPayoutRetryAt DateTime?
   createdAt DateTime @default(now())
 
   // ✅ Optional 1:1 thread linked by SupportThread.withdrawalRequestId

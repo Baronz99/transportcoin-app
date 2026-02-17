@@ -38,12 +38,21 @@ type PendingWithdrawal = {
   amountTcn: number;
   asset: string;
   network: string;
+  address?: string | null;
   status: string;
   createdAt: string;
   queuedAt?: string | null;
   queueDueAt?: string | null;
   queueLane?: string | null;
   expediteAppliedAt?: string | null;
+  holdDeficitTcg?: number | null;
+  holdReason?: string | null;
+  collateralTierSnapshot?: string | null;
+  collateralReserveFloorTcg?: number | null;
+  collateralRequiredTcg?: number | null;
+  proUpgradeActivatedAt?: string | null;
+  proUpgradeRevertDeadlineAt?: string | null;
+  lastPayoutRetryAt?: string | null;
   estimatedMinMinutes?: number | null;
   estimatedMaxMinutes?: number | null;
   estimatedLabel?: string | null;
@@ -146,6 +155,9 @@ export default function DashboardPage() {
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState<string | null>(null);
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null);
+  const [revertLoading, setRevertLoading] = useState(false);
+  const [revertError, setRevertError] = useState<string | null>(null);
+  const [revertMessage, setRevertMessage] = useState<string | null>(null);
   const [queueNow, setQueueNow] = useState(Date.now());
   const [queueJumpAppliedById, setQueueJumpAppliedById] = useState<
     Record<number, boolean>
@@ -455,6 +467,8 @@ export default function DashboardPage() {
     setUpgradeLoading(true);
     setUpgradeError(null);
     setUpgradeMessage(null);
+    setRevertError(null);
+    setRevertMessage(null);
     try {
       const res = await fetch("/api/wallet/withdrawals/upgrade", {
         method: "POST",
@@ -476,6 +490,39 @@ export default function DashboardPage() {
       setUpgradeError("Network error upgrading queue lane.");
     } finally {
       setUpgradeLoading(false);
+    }
+  };
+
+  const revertToBasicLane = async () => {
+    if (!token) return;
+    setRevertLoading(true);
+    setRevertError(null);
+    setRevertMessage(null);
+    setUpgradeError(null);
+    try {
+      const res = await fetch("/api/wallet/withdrawals/upgrade/revert", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setRevertError(data.error || "Failed to revert to BASIC.");
+        return;
+      }
+      setRevertMessage(data.message || "Returned to BASIC lane.");
+      setQueuedWithdrawal(data.withdrawal || null);
+      setUserMeta((prev) =>
+        prev ? { ...prev, tier: data.tier || "BASIC" } : prev
+      );
+      await loadQueuedWithdrawal();
+      await loadAuditLogs();
+    } catch (err) {
+      console.error(err);
+      setRevertError("Network error reverting to BASIC lane.");
+    } finally {
+      setRevertLoading(false);
     }
   };
 
@@ -752,6 +799,12 @@ export default function DashboardPage() {
                     {queuedWithdrawal.amountTcn.toLocaleString()} TCN
                   </p>
                   <p>
+                    Status:{" "}
+                    <span className="font-semibold text-slate-100">
+                      {queuedWithdrawal.status.replace(/_/g, " ").toLowerCase()}
+                    </span>
+                  </p>
+                  <p>
                     Lane:{" "}
                     <span className="font-semibold text-slate-100">
                       {queuedWithdrawal.queueLane || "BASIC"}
@@ -773,6 +826,18 @@ export default function DashboardPage() {
                         : "—"}
                     </span>
                   </p>
+                  {queuedWithdrawal.status === "ON_HOLD_COLLATERAL" && (
+                    <>
+                      <p className="text-amber-300">
+                        Collateral deficit:{" "}
+                        {queuedWithdrawal.holdDeficitTcg?.toLocaleString() || 0} TCG
+                      </p>
+                      <p className="text-amber-200/90">
+                        {queuedWithdrawal.holdReason ||
+                          "Top up deficit to auto-release checks every 10 minutes."}
+                      </p>
+                    </>
+                  )}
                   {userMeta?.tier !== "PRO" && (
                     <div className="mt-2 rounded-xl border border-gold/30 bg-black/30 px-3 py-2">
                       <p className="text-[10px] text-slate-300">
@@ -976,8 +1041,12 @@ export default function DashboardPage() {
         onRunAudit={runWithdrawalAudit}
         onRelease={releaseWithdrawal}
         onUpgradeToPro={upgradeToProLane}
+        onRevertToBasic={revertToBasicLane}
         upgradeLoading={upgradeLoading}
         upgradeError={upgradeError}
+        revertLoading={revertLoading}
+        revertError={revertError}
+        revertMessage={revertMessage}
         message={auditMessage}
         error={auditError}
         releaseMessage={releaseMessage}

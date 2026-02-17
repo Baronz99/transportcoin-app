@@ -29,6 +29,7 @@ export async function GET(req: Request) {
         amountTcn: withdrawal.amountTcn,
         asset: withdrawal.asset,
         network: withdrawal.network,
+        address: withdrawal.address,
         status: withdrawal.status,
         createdAt: withdrawal.createdAt,
       },

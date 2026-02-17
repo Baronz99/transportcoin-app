@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
+import { buildCollateralSnapshot } from "@/lib/withdrawalCollateral";
 
 function requiredTcgForWithdrawal(amountTcn: number) {
   return Math.max(1, Math.ceil(amountTcn / 100)); // 1% of TCN amount
@@ -81,6 +82,10 @@ export async function POST(req: Request) {
           address: address || "INTERNAL_LEDGER",
           amountTcn: value,
           status: "PENDING",
+          ...buildCollateralSnapshot({
+            tier: user.tier,
+            amountTcn: value,
+          }),
         },
       });
 

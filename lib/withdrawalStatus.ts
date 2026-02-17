@@ -4,6 +4,8 @@ export function withdrawalStatusLabel(status: string) {
       return "Pending";
     case "WAITING_QUEUE":
       return "Waiting queue";
+    case "ON_HOLD_COLLATERAL":
+      return "On hold (collateral)";
     case "READY_FOR_PAYOUT":
       return "Ready for payout";
     case "COMPLETED":
@@ -21,6 +23,8 @@ export function withdrawalStatusChipClasses(status: string) {
       return "bg-amber-900/60 text-amber-300";
     case "WAITING_QUEUE":
       return "bg-indigo-900/60 text-indigo-200";
+    case "ON_HOLD_COLLATERAL":
+      return "bg-amber-900/60 text-amber-200";
     case "READY_FOR_PAYOUT":
       return "bg-blue-900/60 text-blue-200";
     case "COMPLETED":
@@ -38,13 +42,15 @@ export function withdrawalStatusRank(status: string) {
       return 1;
     case "WAITING_QUEUE":
       return 2;
-    case "READY_FOR_PAYOUT":
+    case "ON_HOLD_COLLATERAL":
       return 3;
-    case "COMPLETED":
+    case "READY_FOR_PAYOUT":
       return 4;
+    case "COMPLETED":
+      return 5;
     case "REJECTED":
-      return 5;
+      return 6;
     default:
-      return 5;
+      return 6;
   }
 }

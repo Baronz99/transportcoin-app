@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
+import { buildCollateralSnapshot } from "@/lib/withdrawalCollateral";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,10 @@ export async function POST(req: NextRequest) {
           address: String(address).trim(),
           amountTcn: value,
           status: "PENDING",
+          ...buildCollateralSnapshot({
+            tier: user.tier,
+            amountTcn: value,
+          }),
         },
       });
 

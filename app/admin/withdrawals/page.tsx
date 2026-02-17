@@ -144,6 +144,7 @@ export default function AdminWithdrawalsPage() {
         >
           <option value="PENDING">Pending</option>
           <option value="WAITING_QUEUE">Waiting queue</option>
+          <option value="ON_HOLD_COLLATERAL">On hold (collateral)</option>
           <option value="READY_FOR_PAYOUT">Ready for payout</option>
           <option value="COMPLETED">Completed</option>
           <option value="REJECTED">Rejected</option>
@@ -228,6 +229,14 @@ export default function AdminWithdrawalsPage() {
                       Reject
                     </button>
                   </>
+                )}
+                {w.status === "ON_HOLD_COLLATERAL" && (
+                  <button
+                    onClick={() => openActionModal("REJECT", w)}
+                    className="px-2 py-1 bg-red-600"
+                  >
+                    Reject
+                  </button>
                 )}
               </td>
             </tr>

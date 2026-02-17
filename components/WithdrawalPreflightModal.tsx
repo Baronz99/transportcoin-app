@@ -8,12 +8,21 @@ type Withdrawal = {
   amountTcn: number;
   asset: string;
   network: string;
+  address?: string | null;
   status: string;
   createdAt: string;
   queuedAt?: string | null;
   queueDueAt?: string | null;
   queueLane?: string | null;
   expediteAppliedAt?: string | null;
+  holdDeficitTcg?: number | null;
+  holdReason?: string | null;
+  collateralTierSnapshot?: string | null;
+  collateralReserveFloorTcg?: number | null;
+  collateralRequiredTcg?: number | null;
+  proUpgradeActivatedAt?: string | null;
+  proUpgradeRevertDeadlineAt?: string | null;
+  lastPayoutRetryAt?: string | null;
   estimatedMinMinutes?: number | null;
   estimatedMaxMinutes?: number | null;
   estimatedLabel?: string | null;
@@ -59,8 +68,12 @@ type Props = {
   onRunAudit: () => void;
   onRelease: () => void;
   onUpgradeToPro?: () => void;
+  onRevertToBasic?: () => void;
   upgradeLoading?: boolean;
   upgradeError?: string | null;
+  revertLoading?: boolean;
+  revertError?: string | null;
+  revertMessage?: string | null;
   message: string | null;
   error: string | null;
   releaseMessage: string | null;
@@ -82,8 +95,12 @@ export default function WithdrawalPreflightModal({
   onRunAudit,
   onRelease,
   onUpgradeToPro,
+  onRevertToBasic,
   upgradeLoading,
   upgradeError,
+  revertLoading,
+  revertError,
+  revertMessage,
   message,
   error,
   releaseMessage,
@@ -107,6 +124,8 @@ export default function WithdrawalPreflightModal({
       : null;
 
   const isQueued = withdrawal?.status === "WAITING_QUEUE";
+  const isHold = withdrawal?.status === "ON_HOLD_COLLATERAL";
+  const isReadyForPayout = withdrawal?.status === "READY_FOR_PAYOUT";
   const showUpgradeCta = isQueued && withdrawal?.queueLane !== "PRO";
 
   return (
@@ -153,6 +172,11 @@ export default function WithdrawalPreflightModal({
               <p className="mt-2 text-[11px] text-slate-500">
                 Requested at {new Date(withdrawal.createdAt).toLocaleString()}
               </p>
+              {withdrawal.address && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Destination: {withdrawal.address}
+                </p>
+              )}
               <p className="mt-1 text-[11px] text-slate-400">
                 Goal: Maintain {breakdown?.reserveFloorTcg ?? 800} TCG reserve +
                 hold 1% of the withdrawal in spendable TCG.
@@ -167,7 +191,7 @@ export default function WithdrawalPreflightModal({
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={onRunAudit}
-              disabled={!withdrawal || isQueued || auditLoading}
+              disabled={!withdrawal || isQueued || isHold || isReadyForPayout || auditLoading}
               className="rounded-full border border-gold px-4 py-2 text-[11px] font-semibold text-gold hover:bg-gold/10 disabled:opacity-60"
             >
               {auditLoading ? "Running..." : "Run Withdrawal Audit"}
@@ -177,6 +201,8 @@ export default function WithdrawalPreflightModal({
               disabled={
                 !withdrawal ||
                 isQueued ||
+                isHold ||
+                isReadyForPayout ||
                 releaseLoading ||
                 !allowRelease
               }
@@ -189,13 +215,17 @@ export default function WithdrawalPreflightModal({
             </p>
           </div>
 
-          {isQueued && (
+          {(isQueued || isHold || isReadyForPayout) && (
             <div className="rounded-2xl border border-emerald-800 bg-emerald-950/30 px-4 py-3 text-[11px] text-emerald-200">
               <p className="text-xs font-semibold text-emerald-100">
-                Success: queued for payout lane
+                {isHold
+                  ? "Payout paused: collateral checkpoint failed"
+                  : isReadyForPayout
+                    ? "Ready for payout dispatch"
+                    : "Success: queued for payout lane"}
               </p>
               <p className="mt-1">
-                Lane: {withdrawal.queueLane || "BASIC"} · ETA{" "}
+                Lane: {withdrawal?.queueLane || "BASIC"} · ETA{" "}
                 {withdrawal.queueLane === "PRO"
                   ? withdrawal.estimatedLabel || "5 to 30 minutes"
                   : `${displayedQueueDays ?? "—"} day${displayedQueueDays === 1 ? "" : "s"}`}
@@ -206,6 +236,57 @@ export default function WithdrawalPreflightModal({
                   ? new Date(withdrawal.queuedAt).toLocaleString()
                   : "—"}
               </p>
+              {isHold && (
+                <div className="mt-2 rounded-xl border border-amber-700/60 bg-black/30 px-3 py-2 text-[11px] text-amber-100">
+                  <p className="font-semibold">
+                    Deficit: {(withdrawal.holdDeficitTcg ?? 0).toLocaleString()} TCG
+                  </p>
+                  <p className="mt-1 text-[10px] text-amber-200/90">
+                    {withdrawal.holdReason ||
+                      "Retry checks run every 10 minutes and release automatically once deficit is cleared."}
+                  </p>
+                  {withdrawal.proUpgradeRevertDeadlineAt && (
+                    <p className="mt-1 text-[10px] text-amber-200/90">
+                      Revert window ends:{" "}
+                      {new Date(withdrawal.proUpgradeRevertDeadlineAt).toLocaleString()}
+                    </p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={onRevertToBasic}
+                      disabled={!onRevertToBasic || revertLoading}
+                      className="rounded-full border border-amber-300 px-3 py-1.5 text-[10px] font-semibold text-amber-100 hover:bg-amber-300/10 disabled:opacity-60"
+                    >
+                      {revertLoading ? "Reverting..." : "Revert to BASIC + Refund 1000 TCG"}
+                    </button>
+                    <span className="text-[10px] text-slate-300">
+                      Keep PRO by topping up deficit.
+                    </span>
+                  </div>
+                  {revertError && (
+                    <p className="mt-2 text-rose-300">{revertError}</p>
+                  )}
+                  {revertMessage && !revertError && (
+                    <p className="mt-2 text-emerald-300">{revertMessage}</p>
+                  )}
+                </div>
+              )}
+              {(isHold || isReadyForPayout) && (
+                <div className="mt-3 rounded-xl border border-slate-700 bg-black/40 px-3 py-2 text-[10px] text-slate-200">
+                  <p className="font-semibold text-slate-100">Ops Timeline</p>
+                  <p className="mt-1">
+                    1) Queue slot assigned for{" "}
+                    {withdrawal.amountTcn.toLocaleString()} TCN to{" "}
+                    {withdrawal.address || "destination wallet"}.
+                  </p>
+                  <p>2) PRO lane acceleration engaged.</p>
+                  <p>
+                    3) Collateral checkpoint{" "}
+                    {isHold ? "paused payout" : "passed; payout unlocked"}.
+                  </p>
+                  <p>4) System retries payout checks every 10 minutes.</p>
+                </div>
+              )}
               {showUpgradeCta && (
                 <div className="mt-2 rounded-xl border border-gold/40 bg-black/30 px-3 py-2 text-[11px] text-gold">
                   <p className="font-semibold">Jump Queue · Upgrade to PRO</p>
@@ -236,11 +317,12 @@ export default function WithdrawalPreflightModal({
           <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-[11px] text-slate-300">
             Gate status:{" "}
             <span className="font-semibold">
-              {isQueued && "Queued (release completed)"}
-              {!isQueued && gateState === "idle" && "Idle (run audit)"}
-              {gateState === "running_audit" && "Running audit..."}
-              {gateState === "failed" && "Failed (latest audit is not PASS)"}
-              {gateState === "passed" && "Passed (release unlocked)"}
+              {(isQueued || isReadyForPayout) && "Queued (release completed)"}
+              {isHold && "On hold (collateral deficit)"}
+              {!isQueued && !isHold && !isReadyForPayout && gateState === "idle" && "Idle (run audit)"}
+              {!isQueued && !isHold && !isReadyForPayout && gateState === "running_audit" && "Running audit..."}
+              {!isQueued && !isHold && !isReadyForPayout && gateState === "failed" && "Failed (latest audit is not PASS)"}
+              {!isQueued && !isHold && !isReadyForPayout && gateState === "passed" && "Passed (release unlocked)"}
             </span>
           </div>
 

@@ -5,6 +5,7 @@ import {
   PRO_QUEUE_MAX_MINUTES,
   PRO_QUEUE_MIN_MINUTES,
 } from "@/lib/withdrawalQueue";
+import { retryQueuedPayoutChecksForUser } from "@/lib/withdrawalCollateral";
 
 export async function GET(req: Request) {
   try {
@@ -14,8 +15,13 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    await retryQueuedPayoutChecksForUser({ userId: authUser.userId });
+
     const queued = await prisma.withdrawalRequest.findFirst({
-      where: { userId: authUser.userId, status: "WAITING_QUEUE" },
+      where: {
+        userId: authUser.userId,
+        status: { in: ["WAITING_QUEUE", "ON_HOLD_COLLATERAL", "READY_FOR_PAYOUT"] },
+      },
       orderBy: { queuedAt: "desc" },
     });
 
@@ -29,12 +35,21 @@ export async function GET(req: Request) {
         amountTcn: queued.amountTcn,
         asset: queued.asset,
         network: queued.network,
+        address: queued.address,
         status: queued.status,
         createdAt: queued.createdAt,
         queuedAt: queued.queuedAt,
         queueDueAt: queued.queueDueAt,
         queueLane: queued.queueLane,
         expediteAppliedAt: queued.expediteAppliedAt,
+        holdDeficitTcg: queued.holdDeficitTcg,
+        holdReason: queued.holdReason,
+        collateralTierSnapshot: queued.collateralTierSnapshot,
+        collateralReserveFloorTcg: queued.collateralReserveFloorTcg,
+        collateralRequiredTcg: queued.collateralRequiredTcg,
+        proUpgradeActivatedAt: queued.proUpgradeActivatedAt,
+        proUpgradeRevertDeadlineAt: queued.proUpgradeRevertDeadlineAt,
+        lastPayoutRetryAt: queued.lastPayoutRetryAt,
         estimatedMinMinutes: queued.queueLane === "PRO"
           ? PRO_QUEUE_MIN_MINUTES
           : null,
