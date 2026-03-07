@@ -24,6 +24,14 @@ export async function GET(req: NextRequest) {
     }
 
     const now = new Date();
+    const user = await prisma.user.findUnique({
+      where: { id: authUser.userId },
+      select: { tier: true },
+    });
+
+    if (!user) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
 
     await prisma.dashboardAlert.updateMany({
       where: {
@@ -33,6 +41,18 @@ export async function GET(req: NextRequest) {
       },
       data: {
         status: "EXPIRED",
+      },
+    });
+
+    await prisma.dashboardAlert.updateMany({
+      where: {
+        userId: authUser.userId,
+        status: { in: ["NEW", "VIEWED", "ACTED"] },
+        autoResolveTier: user.tier,
+      },
+      data: {
+        status: "RESOLVED",
+        resolvedAt: now,
       },
     });
 

@@ -228,6 +228,7 @@ model DashboardAlert {
   requiresAction   Boolean  @default(true)
   ctaLabel         String?
   ctaHref          String?
+  autoResolveTier  String?
   status           String   @default("NEW") // NEW | VIEWED | ACTED | RESOLVED | EXPIRED
   viewedAt         DateTime?
   actedAt          DateTime?

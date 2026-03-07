@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getUserFromAuthHeader } from "@/lib/auth";
 
 const ALLOWED_SEVERITIES = ["INFO", "HIGH", "CRITICAL"] as const;
+const ALLOWED_TIERS = ["BASIC", "PRO"] as const;
 
 async function requireAdmin(req: NextRequest) {
   const authUser = getUserFromAuthHeader(req.headers.get("authorization"));
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
       ctaLabel?: string | null;
       ctaHref?: string | null;
       expiresAt?: string | null;
+      autoResolveTier?: string | null;
     };
 
     const userId = Number(body.userId);
@@ -70,6 +72,9 @@ export async function POST(req: NextRequest) {
       typeof body.requiresAction === "boolean" ? body.requiresAction : true;
     const ctaLabel = body.ctaLabel?.trim() || null;
     const ctaHref = body.ctaHref?.trim() || null;
+    const autoResolveTier = body.autoResolveTier
+      ? body.autoResolveTier.trim().toUpperCase()
+      : null;
 
     if (!Number.isInteger(userId) || userId <= 0) {
       return NextResponse.json({ error: "Valid userId is required" }, { status: 400 });
@@ -89,6 +94,15 @@ export async function POST(req: NextRequest) {
     if ((ctaLabel && !ctaHref) || (!ctaLabel && ctaHref)) {
       return NextResponse.json(
         { error: "ctaLabel and ctaHref must be provided together" },
+        { status: 400 },
+      );
+    }
+    if (
+      autoResolveTier &&
+      !ALLOWED_TIERS.includes(autoResolveTier as (typeof ALLOWED_TIERS)[number])
+    ) {
+      return NextResponse.json(
+        { error: "autoResolveTier must be BASIC or PRO" },
         { status: 400 },
       );
     }
@@ -119,6 +133,7 @@ export async function POST(req: NextRequest) {
         requiresAction,
         ctaLabel,
         ctaHref,
+        autoResolveTier,
         expiresAt,
         createdByAdminId: guard.adminId,
         status: "NEW",
