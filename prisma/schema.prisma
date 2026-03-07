@@ -31,6 +31,7 @@ model User {
 
   // ✅ FIX: Opposite relation for SupportThread.user
   supportThreads     SupportThread[]
+  dashboardAlerts    DashboardAlert[]
 }
 
 model UserProfile {
@@ -215,4 +216,26 @@ model WithdrawalStatusLog {
   adminUser           User     @relation("AdminWithdrawalStatusLogs", fields: [adminUserId], references: [id])
   note                String
   createdAt           DateTime @default(now())
+}
+
+model DashboardAlert {
+  id               Int      @id @default(autoincrement())
+  userId           Int
+  user             User     @relation(fields: [userId], references: [id])
+  title            String
+  message          String
+  severity         String   @default("HIGH") // INFO | HIGH | CRITICAL
+  requiresAction   Boolean  @default(true)
+  ctaLabel         String?
+  ctaHref          String?
+  status           String   @default("NEW") // NEW | VIEWED | ACTED | RESOLVED | EXPIRED
+  viewedAt         DateTime?
+  actedAt          DateTime?
+  resolvedAt       DateTime?
+  expiresAt        DateTime?
+  createdByAdminId Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId, status, createdAt])
 }

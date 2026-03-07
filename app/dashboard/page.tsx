@@ -86,6 +86,29 @@ type AuditBreakdown = {
 
 type PreflightGateState = "idle" | "running_audit" | "failed" | "passed";
 
+type DashboardAlertStatus =
+  | "NEW"
+  | "VIEWED"
+  | "ACTED"
+  | "RESOLVED"
+  | "EXPIRED";
+
+type DashboardAlert = {
+  id: number;
+  title: string;
+  message: string;
+  severity: "INFO" | "HIGH" | "CRITICAL";
+  requiresAction: boolean;
+  ctaLabel?: string | null;
+  ctaHref?: string | null;
+  status: DashboardAlertStatus;
+  viewedAt?: string | null;
+  actedAt?: string | null;
+  resolvedAt?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+};
+
 const fmtUsdFromCents = (cents: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -127,6 +150,17 @@ const statusChipClasses = (status: string) => {
   }
 };
 
+const alertSeverityClasses = (severity: DashboardAlert["severity"]) => {
+  switch (severity) {
+    case "CRITICAL":
+      return "border-rose-700/70 bg-rose-950/40 text-rose-100";
+    case "HIGH":
+      return "border-amber-700/70 bg-amber-950/40 text-amber-100";
+    default:
+      return "border-sky-700/70 bg-sky-950/40 text-sky-100";
+  }
+};
+
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -163,6 +197,12 @@ export default function DashboardPage() {
     Record<number, boolean>
   >({});
   const [gateState, setGateState] = useState<PreflightGateState>("idle");
+  const [dashboardAlert, setDashboardAlert] = useState<DashboardAlert | null>(
+    null,
+  );
+  const [alertLoading, setAlertLoading] = useState(false);
+  const [alertActionLoading, setAlertActionLoading] = useState(false);
+  const [alertError, setAlertError] = useState<string | null>(null);
 
   const token =
     typeof window !== "undefined"
@@ -363,6 +403,92 @@ export default function DashboardPage() {
     }
   };
 
+  const loadDashboardAlert = async () => {
+    if (!token) return;
+    setAlertLoading(true);
+    setAlertError(null);
+    try {
+      const res = await fetch("/api/dashboard/alerts", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setDashboardAlert(null);
+        setAlertError(data.error || "Could not load dashboard alerts.");
+        return;
+      }
+
+      const nextAlert = (data.alert as DashboardAlert | null) ?? null;
+      setDashboardAlert(nextAlert);
+
+      if (nextAlert?.status === "NEW") {
+        await fetch("/api/dashboard/alerts", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            alertId: nextAlert.id,
+            action: "view",
+          }),
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      setDashboardAlert(null);
+      setAlertError("Network error loading dashboard alerts.");
+    } finally {
+      setAlertLoading(false);
+    }
+  };
+
+  const updateDashboardAlertStatus = async (
+    alertId: number,
+    action: "act" | "resolve",
+  ) => {
+    if (!token) return;
+    setAlertActionLoading(true);
+    setAlertError(null);
+    try {
+      const res = await fetch("/api/dashboard/alerts", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          alertId,
+          action,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAlertError(data.error || "Failed to update alert status.");
+        return;
+      }
+      if (action === "resolve") {
+        setDashboardAlert(null);
+      } else {
+        setDashboardAlert((data.alert as DashboardAlert | null) ?? null);
+      }
+    } catch (err) {
+      console.error(err);
+      setAlertError("Network error updating alert status.");
+    } finally {
+      setAlertActionLoading(false);
+    }
+  };
+
+  const handleAlertAction = async () => {
+    if (!dashboardAlert) return;
+    await updateDashboardAlertStatus(dashboardAlert.id, "act");
+    if (dashboardAlert.ctaHref) {
+      router.push(dashboardAlert.ctaHref);
+    }
+  };
+
   const runWithdrawalAudit = async () => {
     if (!token) return;
     setGateState("running_audit");
@@ -530,6 +656,7 @@ export default function DashboardPage() {
     loadPendingWithdrawal();
     loadQueuedWithdrawal();
     loadAuditLogs();
+    loadDashboardAlert();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, userMeta?.id]);
 
@@ -538,6 +665,7 @@ export default function DashboardPage() {
     const interval = setInterval(() => {
       loadPendingWithdrawal();
       loadQueuedWithdrawal();
+      loadDashboardAlert();
     }, 60000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -633,6 +761,11 @@ export default function DashboardPage() {
     [transactions],
   );
 
+  const alertExpiresLabel = useMemo(() => {
+    if (!dashboardAlert?.expiresAt) return null;
+    return new Date(dashboardAlert.expiresAt).toLocaleString();
+  }, [dashboardAlert?.expiresAt]);
+
   if (loading && !wallet && !userMeta) {
     return (
       <main className="p-6 text-sm text-slate-400">
@@ -679,6 +812,56 @@ export default function DashboardPage() {
           </span>
         </div>
       </div>
+
+      {dashboardAlert && (
+        <section
+          className={`mb-5 rounded-2xl border px-4 py-3 text-xs ${alertSeverityClasses(
+            dashboardAlert.severity,
+          )}`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-3xl">
+              <p className="text-[11px] uppercase tracking-[0.18em] opacity-90">
+                Action required
+              </p>
+              <h2 className="mt-1 text-sm font-semibold">{dashboardAlert.title}</h2>
+              <p className="mt-1 text-[12px] opacity-90">{dashboardAlert.message}</p>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] opacity-80">
+                <span>Status: {dashboardAlert.status.toLowerCase()}</span>
+                {alertExpiresLabel && <span>Deadline: {alertExpiresLabel}</span>}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {dashboardAlert.ctaHref && (
+                <button
+                  onClick={handleAlertAction}
+                  disabled={alertActionLoading}
+                  className="rounded-full border border-current px-3 py-2 text-[11px] font-semibold hover:bg-black/20 disabled:opacity-60"
+                >
+                  {alertActionLoading
+                    ? "Processing..."
+                    : dashboardAlert.ctaLabel || "Take action"}
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  updateDashboardAlertStatus(dashboardAlert.id, "resolve")
+                }
+                disabled={alertActionLoading}
+                className="rounded-full border border-current px-3 py-2 text-[11px] hover:bg-black/20 disabled:opacity-60"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+          {alertError && <p className="mt-2 text-[11px]">{alertError}</p>}
+        </section>
+      )}
+
+      {alertLoading && !dashboardAlert && (
+        <p className="mb-4 text-[11px] text-slate-500">Checking alerts...</p>
+      )}
 
       {pendingWithdrawal?.status === "PENDING" && !preflightOpen && (
         <div className="mb-5 rounded-2xl border border-amber-800/60 bg-amber-950/40 px-4 py-3 text-xs text-amber-100">
