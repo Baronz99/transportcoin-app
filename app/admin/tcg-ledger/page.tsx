@@ -38,6 +38,10 @@ export default function TcGoldLedgerPage() {
 
   const [config, setConfig] = useState<PlatformConfigDto | null>(null);
   const [configSaving, setConfigSaving] = useState(false);
+  const [creditEmail, setCreditEmail] = useState("");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditNote, setCreditNote] = useState("");
+  const [creditSaving, setCreditSaving] = useState(false);
 
   const token =
     typeof window !== "undefined"
@@ -97,6 +101,7 @@ export default function TcGoldLedgerPage() {
 
   useEffect(() => {
     fetchConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
@@ -134,6 +139,55 @@ export default function TcGoldLedgerPage() {
       alert("Failed to save config (network error).");
     } finally {
       setConfigSaving(false);
+    }
+  };
+
+  const submitManualCredit = async () => {
+    if (!token) return;
+
+    const amount = Number(creditAmount);
+
+    if (!creditEmail.trim()) {
+      alert("Enter a user email.");
+      return;
+    }
+
+    if (!Number.isInteger(amount) || amount <= 0) {
+      alert("Enter a whole-number TCGold amount greater than 0.");
+      return;
+    }
+
+    try {
+      setCreditSaving(true);
+      const res = await fetch("/api/admin/tcg-credit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userEmail: creditEmail.trim().toLowerCase(),
+          amount,
+          note: creditNote.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to apply manual TCGold credit.");
+        return;
+      }
+
+      alert(
+        `Credited ${amount} TCG to ${data.user?.email}. New balance: ${data.wallet?.tcGoldBalance}.`,
+      );
+      setCreditAmount("");
+      setCreditNote("");
+      fetchPurchases();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to apply manual TCGold credit (network error).");
+    } finally {
+      setCreditSaving(false);
     }
   };
 
@@ -285,6 +339,65 @@ export default function TcGoldLedgerPage() {
             Loading configuration…
           </p>
         )}
+      </section>
+
+      <section className="mb-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 text-xs">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+          Manual TCGold credit
+        </p>
+        <p className="mt-1 max-w-xl text-[11px] text-slate-400">
+          Credit TCGold directly to a user wallet by email. This creates a
+          ledger entry with type <span className="font-mono">ADMIN_TCG_CREDIT</span>.
+        </p>
+
+        <div className="mt-3 grid gap-4 md:grid-cols-[2fr_1fr]">
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-400">
+              User email
+              <input
+                type="email"
+                value={creditEmail}
+                onChange={(e) => setCreditEmail(e.target.value)}
+                placeholder="user@example.com"
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+
+            <label className="block text-[11px] text-slate-400">
+              Admin note
+              <textarea
+                value={creditNote}
+                onChange={(e) => setCreditNote(e.target.value)}
+                placeholder="Reason for this manual credit"
+                rows={3}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-400">
+              TCG amount
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={creditAmount}
+                onChange={(e) => setCreditAmount(e.target.value)}
+                placeholder="100"
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+
+            <button
+              disabled={creditSaving}
+              onClick={submitManualCredit}
+              className="w-full rounded-full bg-gold px-3 py-2 text-[11px] font-semibold text-black hover:bg-gold-soft disabled:opacity-60"
+            >
+              {creditSaving ? "Applying credit..." : "Apply TCGold credit"}
+            </button>
+          </div>
+        </div>
       </section>
 
       {error && (

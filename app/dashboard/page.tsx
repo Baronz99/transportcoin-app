@@ -127,8 +127,12 @@ const formatType = (t: string) => {
       return "Withdrawal";
     case "BUY_TCGOLD":
       return "Bought TCGold";
+    case "TCG_PURCHASE":
+      return "TCGold purchase confirmed";
     case "SELL_TCGOLD":
       return "Sold TCGold";
+    case "ADMIN_TCG_CREDIT":
+      return "Admin TCGold credit";
     case "WITHDRAW_CRYPTO_REQUEST":
       return "Crypto withdrawal request";
     default:
