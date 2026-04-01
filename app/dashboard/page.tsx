@@ -133,6 +133,8 @@ const formatType = (t: string) => {
       return "Sold TCGold";
     case "ADMIN_TCG_CREDIT":
       return "Admin TCGold credit";
+    case "ADMIN_TIER_CHANGE":
+      return "Admin tier change";
     case "WITHDRAW_CRYPTO_REQUEST":
       return "Crypto withdrawal request";
     default:

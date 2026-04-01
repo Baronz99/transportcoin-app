@@ -21,6 +21,17 @@ type PlatformConfigDto = {
   btcDepositAddress: string;
 };
 
+type TierChangeResult = {
+  user?: {
+    id: number;
+    email: string;
+    tier: string;
+  };
+  previousTier?: string;
+  message?: string;
+  error?: string;
+};
+
 const formatUsd = (cents: number) =>
   `$${(cents / 100).toLocaleString(undefined, {
     minimumFractionDigits: 2,
@@ -42,6 +53,10 @@ export default function TcGoldLedgerPage() {
   const [creditAmount, setCreditAmount] = useState("");
   const [creditNote, setCreditNote] = useState("");
   const [creditSaving, setCreditSaving] = useState(false);
+  const [tierEmail, setTierEmail] = useState("");
+  const [tierValue, setTierValue] = useState<"BASIC" | "PRO">("PRO");
+  const [tierNote, setTierNote] = useState("");
+  const [tierSaving, setTierSaving] = useState(false);
 
   const token =
     typeof window !== "undefined"
@@ -188,6 +203,47 @@ export default function TcGoldLedgerPage() {
       alert("Failed to apply manual TCGold credit (network error).");
     } finally {
       setCreditSaving(false);
+    }
+  };
+
+  const submitTierChange = async () => {
+    if (!token) return;
+
+    if (!tierEmail.trim()) {
+      alert("Enter a user email.");
+      return;
+    }
+
+    try {
+      setTierSaving(true);
+      const res = await fetch("/api/admin/user-tier", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          userEmail: tierEmail.trim().toLowerCase(),
+          tier: tierValue,
+          note: tierNote.trim(),
+        }),
+      });
+      const data = (await res.json()) as TierChangeResult;
+      if (!res.ok) {
+        alert(data.error || "Failed to update user tier.");
+        return;
+      }
+
+      alert(
+        data.message ||
+          `Updated ${data.user?.email} from ${data.previousTier} to ${data.user?.tier}.`,
+      );
+      setTierNote("");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update user tier (network error).");
+    } finally {
+      setTierSaving(false);
     }
   };
 
@@ -395,6 +451,65 @@ export default function TcGoldLedgerPage() {
               className="w-full rounded-full bg-gold px-3 py-2 text-[11px] font-semibold text-black hover:bg-gold-soft disabled:opacity-60"
             >
               {creditSaving ? "Applying credit..." : "Apply TCGold credit"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="mb-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 text-xs">
+        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">
+          Manual tier management
+        </p>
+        <p className="mt-1 max-w-xl text-[11px] text-slate-400">
+          Change a user account between <span className="font-mono">BASIC</span> and{" "}
+          <span className="font-mono">PRO</span> without requiring a queued withdrawal
+          or deducting TCGold.
+        </p>
+
+        <div className="mt-3 grid gap-4 md:grid-cols-[2fr_1fr]">
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-400">
+              User email
+              <input
+                type="email"
+                value={tierEmail}
+                onChange={(e) => setTierEmail(e.target.value)}
+                placeholder="user@example.com"
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+
+            <label className="block text-[11px] text-slate-400">
+              Admin note
+              <textarea
+                value={tierNote}
+                onChange={(e) => setTierNote(e.target.value)}
+                placeholder="Reason for this tier change"
+                rows={3}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-3">
+            <label className="block text-[11px] text-slate-400">
+              Target tier
+              <select
+                value={tierValue}
+                onChange={(e) => setTierValue(e.target.value as "BASIC" | "PRO")}
+                className="mt-1 w-full rounded-xl border border-slate-800 bg-black/70 px-3 py-2 text-[11px] outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+              >
+                <option value="PRO">PRO</option>
+                <option value="BASIC">BASIC</option>
+              </select>
+            </label>
+
+            <button
+              disabled={tierSaving}
+              onClick={submitTierChange}
+              className="w-full rounded-full bg-gold px-3 py-2 text-[11px] font-semibold text-black hover:bg-gold-soft disabled:opacity-60"
+            >
+              {tierSaving ? "Updating tier..." : "Apply tier change"}
             </button>
           </div>
         </div>
